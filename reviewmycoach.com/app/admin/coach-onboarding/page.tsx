@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
-import { doc, setDoc, getDoc, collection, getDocs } from 'firebase/firestore';
-import { auth, db } from '../../lib/firebase-client';
+import { auth } from '../../lib/firebase-client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -105,21 +104,26 @@ export default function CoachOnboarding() {
 
   const checkAdminAccess = async (user: User) => {
     try {
-      const userRef = doc(db, 'users', user.uid);
-      const userSnap = await getDoc(userRef);
-      
-      if (userSnap.exists()) {
-        const userData = userSnap.data();
-        if (userData.role !== 'admin') {
-          router.push('/dashboard');
-          return;
-        }
-        setUserRole(userData.role);
-        await fetchTags();
-        await fetchExistingCoaches();
-      } else {
+      const response = await fetch(`/api/auth/user-role?userId=${user.uid}`);
+
+      if (response.status === 404) {
         router.push('/onboarding');
+        return;
       }
+
+      if (!response.ok) {
+        router.push('/dashboard');
+        return;
+      }
+
+      const userData = await response.json();
+      if (userData.role !== 'admin') {
+        router.push('/dashboard');
+        return;
+      }
+      setUserRole(userData.role);
+      await fetchTags();
+      await fetchExistingCoaches();
     } catch (error) {
       console.error('Error checking admin access:', error);
       router.push('/dashboard');
@@ -130,13 +134,11 @@ export default function CoachOnboarding() {
 
   const fetchTags = async () => {
     try {
-      const tagsRef = collection(db, 'tags');
-      const tagsSnapshot = await getDocs(tagsRef);
-      const tags: Tag[] = [];
-      tagsSnapshot.forEach((doc) => {
-        tags.push({ id: doc.id, ...doc.data() } as Tag);
-      });
-      setAvailableTags(tags);
+      const response = await fetch('/api/tags');
+      if (response.ok) {
+        const data = await response.json();
+        setAvailableTags((data.tags || []) as Tag[]);
+      }
     } catch (error) {
       console.error('Error fetching tags:', error);
     }
@@ -144,23 +146,21 @@ export default function CoachOnboarding() {
 
   const fetchExistingCoaches = async () => {
     try {
-      const coachesRef = collection(db, 'coaches');
-      const coachesSnapshot = await getDocs(coachesRef);
-      const coaches: ExistingCoach[] = [];
-      coachesSnapshot.forEach((doc) => {
-        const data = doc.data();
-        coaches.push({
-          id: doc.id,
-          displayName: data.displayName || '',
-          email: data.email || '',
-          sports: data.sports || [],
-          role: data.role || '',
-          organization: data.organization || '',
-          isClaimed: data.isClaimed || false,
-          createdAt: data.createdAt
-        });
-      });
-      setExistingCoaches(coaches.sort((a, b) => a.displayName.localeCompare(b.displayName)));
+      const response = await fetch('/api/coaches?limit=200');
+      if (response.ok) {
+        const data = await response.json();
+        const coaches: ExistingCoach[] = ((data.coaches || []) as any[]).map((c) => ({
+          id: c.id,
+          displayName: c.displayName || '',
+          email: c.email || '',
+          sports: c.sports || [],
+          role: c.role || '',
+          organization: c.organization || '',
+          isClaimed: c.isClaimed || false,
+          createdAt: c.createdAt,
+        }));
+        setExistingCoaches(coaches.sort((a, b) => a.displayName.localeCompare(b.displayName)));
+      }
     } catch (error) {
       console.error('Error fetching coaches:', error);
     }
@@ -168,11 +168,11 @@ export default function CoachOnboarding() {
 
   const loadCoachForEditing = async (coachId: string) => {
     try {
-      const coachRef = doc(db, 'coaches', coachId);
-      const coachSnap = await getDoc(coachRef);
-      
-      if (coachSnap.exists()) {
-        const data = coachSnap.data();
+      const response = await fetch(`/api/coaches/${coachId}`);
+
+      if (response.ok) {
+        const payload = await response.json();
+        const data = payload.coach || payload;
         setFormData({
           displayName: data.displayName || '',
           email: data.email || '',
@@ -253,95 +253,51 @@ export default function CoachOnboarding() {
 
     setSubmitting(true);
     try {
-      if (mode === 'edit' && selectedCoachId) {
-        // Update existing coach
-        const coachRef = doc(db, 'coaches', selectedCoachId);
-        await setDoc(coachRef, {
-          username: formData.username,
-          displayName: formData.displayName,
-          email: formData.email,
-          bio: formData.bio,
-          sports: formData.sports,
-          experience: formData.experience,
-          certifications: formData.certifications,
-          hourlyRate: formData.hourlyRate,
-          location: formData.location,
-          specialties: formData.specialties,
-          languages: formData.languages,
-          organization: formData.organization,
-          role: formData.role,
-          gender: formData.gender,
-          ageGroup: formData.ageGroup,
-          sourceUrl: formData.sourceUrl,
-          phoneNumber: formData.phoneNumber,
-          website: formData.website,
-          socialMedia: formData.socialMedia,
-          updatedAt: new Date(),
-          lastEditedBy: user.uid
-        }, { merge: true });
+      const token = await user.getIdToken();
+      const payload = {
+        username: formData.username,
+        displayName: formData.displayName,
+        email: formData.email,
+        bio: formData.bio,
+        sports: formData.sports,
+        experience: formData.experience,
+        certifications: formData.certifications,
+        hourlyRate: formData.hourlyRate,
+        location: formData.location,
+        specialties: formData.specialties,
+        languages: formData.languages,
+        organization: formData.organization,
+        role: formData.role,
+        gender: formData.gender,
+        ageGroup: formData.ageGroup,
+        sourceUrl: formData.sourceUrl,
+        phoneNumber: formData.phoneNumber,
+        website: formData.website,
+        socialMedia: formData.socialMedia,
+      };
 
-        alert('Coach profile updated successfully!');
-        await fetchExistingCoaches();
-        setMode('browse');
-        resetForm();
-      } else {
-        // Create new coach
-        const coachId = `coach_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        const coachRef = doc(db, 'coaches', coachId);
-        await setDoc(coachRef, {
-          userId: coachId,
-          username: formData.username,
-          displayName: formData.displayName,
-          email: formData.email,
-          bio: formData.bio,
-          sports: formData.sports,
-          experience: formData.experience,
-          certifications: formData.certifications,
-          hourlyRate: formData.hourlyRate,
-          location: formData.location,
-          availability: [],
-          specialties: formData.specialties,
-          languages: formData.languages,
-          organization: formData.organization,
-          role: formData.role,
-          gender: formData.gender,
-          ageGroup: formData.ageGroup,
-          sourceUrl: formData.sourceUrl,
-          averageRating: 0,
-          totalReviews: 0,
-          isVerified: false,
-          isClaimed: false,
-          profileImage: '',
-          phoneNumber: formData.phoneNumber,
-          website: formData.website,
-          socialMedia: formData.socialMedia,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          profileCompleted: true,
-          adminCreated: true,
-          createdBy: user.uid
-        });
+      const isEdit = mode === 'edit' && !!selectedCoachId;
+      const response = await fetch(
+        isEdit ? `/api/admin/coaches/${encodeURIComponent(selectedCoachId as string)}` : '/api/admin/coaches',
+        {
+          method: isEdit ? 'PATCH' : 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        }
+      );
 
-        const userRef = doc(db, 'users', coachId);
-        await setDoc(userRef, {
-          userId: coachId,
-          username: formData.username,
-          email: formData.email,
-          displayName: formData.displayName,
-          createdAt: new Date(),
-          role: 'coach',
-          onboardingCompleted: true,
-          isVerified: false,
-          adminCreated: true,
-          createdBy: user.uid
-        });
-
-        alert('Coach profile created successfully!');
-        await fetchExistingCoaches();
-        setMode('browse');
-        resetForm();
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `Request failed with status ${response.status}`);
       }
+
+      alert(`Coach profile ${isEdit ? 'updated' : 'created'} successfully!`);
+      await fetchExistingCoaches();
+      setMode('browse');
+      resetForm();
     } catch (error) {
       console.error(`Error ${mode === 'edit' ? 'updating' : 'creating'} coach profile:`, error);
       alert(`Error ${mode === 'edit' ? 'updating' : 'creating'} coach profile: ${error instanceof Error ? error.message : 'Unknown error'}`);

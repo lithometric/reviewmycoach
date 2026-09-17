@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth, db } from '../../lib/firebase-admin';
+import { toDateSafe } from '../../lib/pgdb';
 
 interface AnalyticsData {
   bookings: {
@@ -114,7 +115,7 @@ async function fetchBookingsAnalytics(userId: string, startDate: Date, endDate: 
     .where('createdAt', '<=', endDate);
 
   const snapshot = await bookingsQuery.get();
-  const bookings = snapshot.docs.map(doc => doc.data());
+  const bookings = snapshot.docs.map(doc => doc.data() as Record<string, any>);
 
   const total = bookings.length;
   const pending = bookings.filter(b => b.status === 'pending' || b.status === 'pending_payment').length;
@@ -152,7 +153,7 @@ async function fetchApplicationsAnalytics(userId: string, startDate: Date, endDa
     .where('createdAt', '<=', endDate);
 
   const snapshot = await applicationsQuery.get();
-  const applications = snapshot.docs.map(doc => doc.data());
+  const applications = snapshot.docs.map(doc => doc.data() as Record<string, any>);
 
   const total = applications.length;
   const pending = applications.filter(a => a.status === 'pending').length;
@@ -178,7 +179,7 @@ async function fetchMessagesAnalytics(userId: string, startDate: Date, endDate: 
   const conversationsQuery = conversationsRef.where('participants', 'array-contains', userId);
 
   const conversationsSnapshot = await conversationsQuery.get();
-  const conversations = conversationsSnapshot.docs.map(doc => doc.data());
+  const conversations = conversationsSnapshot.docs.map(doc => doc.data() as Record<string, any>);
 
   const totalConversations = conversations.length;
   const unreadMessages = conversations.reduce((sum, conv) => 
@@ -215,7 +216,7 @@ async function fetchReviewsAnalytics(userId: string, startDate: Date, endDate: D
     .where('createdAt', '<=', endDate);
 
   const snapshot = await reviewsQuery.get();
-  const reviews = snapshot.docs.map(doc => doc.data());
+  const reviews = snapshot.docs.map(doc => doc.data() as Record<string, any>);
 
   const total = reviews.length;
   const averageRating = total > 0 ? 
@@ -269,7 +270,7 @@ function generateMonthlyData<T>(
     const monthEnd = new Date(current.getFullYear(), current.getMonth() + 1, 0);
     
     const monthItems = items.filter(item => {
-      const itemDate = item.createdAt?.toDate ? item.createdAt.toDate() : new Date(item.createdAt);
+      const itemDate = toDateSafe(item.createdAt) || new Date(item.createdAt);
       return itemDate >= monthStart && itemDate <= monthEnd;
     });
 

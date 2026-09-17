@@ -2,8 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { User } from 'firebase/auth';
-import { auth, db } from '../lib/firebase-client';
-import { doc, getDoc } from 'firebase/firestore';
+import { auth } from '../lib/firebase-client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -67,26 +66,16 @@ function CardsMarketplaceContent() {
     try {
       // Load coach profile image
       try {
-        const userRef = doc(db, 'users', user.uid);
-        const userSnap = await getDoc(userRef);
-        if (userSnap.exists()) {
-          const userData = userSnap.data();
+        const roleResponse = await fetch(`/api/auth/user-role?userId=${user.uid}`);
+        if (roleResponse.ok) {
+          const userData = await roleResponse.json();
           const username = userData.username;
-          
+
           if (username) {
-            const coachRef = doc(db, 'coaches', username.toLowerCase());
-            const coachSnap = await getDoc(coachRef);
-            if (coachSnap.exists()) {
-              const coachData = coachSnap.data();
-              setProfileImage(coachData.profileImage || null);
-            }
-          } else {
-            // Fallback: try userId
-            const coachRef = doc(db, 'coaches', user.uid);
-            const coachSnap = await getDoc(coachRef);
-            if (coachSnap.exists()) {
-              const coachData = coachSnap.data();
-              setProfileImage(coachData.profileImage || null);
+            const coachResponse = await fetch(`/api/coaches/by-username/${username.toLowerCase()}`);
+            if (coachResponse.ok) {
+              const coachData = await coachResponse.json();
+              setProfileImage(coachData.coach?.profileImage || null);
             }
           }
         }

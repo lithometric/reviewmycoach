@@ -1,30 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
-// import { createCoachRequest, getPendingCoachRequests } from '../../lib/dataconnect';
 import { verifyFirebaseToken } from '../../lib/firebase-admin-server';
 import { v4 as uuidv4 } from 'uuid';
-
-// Initialize Firebase Client for Data Connect
-let clientApp;
-if (getApps().length === 0) {
-  clientApp = initializeApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getApps()[0];
-}
-
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service'
-});
 
 /**
  * POST /api/coach-requests

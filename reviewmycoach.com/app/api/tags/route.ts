@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { collection, getDocs, addDoc, doc, updateDoc, query, orderBy } from 'firebase/firestore';
-import { db } from '../../lib/firebase-client';
+import { adminDb } from '../../lib/firebase-admin-server';
 import { auth } from '../../lib/firebase-admin';
+import { toDateSafe } from '../../lib/pgdb';
 
 interface TagData {
   id: string;
@@ -21,14 +21,12 @@ export async function GET(request: NextRequest) {
     const categoryParam = searchParams.get('category');
     const activeOnlyParam = searchParams.get('activeOnly') === 'true';
 
-    const tagsQuery = query(collection(db, 'tags'), orderBy('name', 'asc'));
-    
-    const tagsSnapshot = await getDocs(tagsQuery);
+    const tagsSnapshot = await adminDb.collection('tags').orderBy('name', 'asc').get();
     let tags: TagData[] = tagsSnapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
-      createdAt: doc.data().createdAt?.toDate().toISOString() || null,
-      updatedAt: doc.data().updatedAt?.toDate().toISOString() || null,
+      createdAt: toDateSafe(doc.data()?.createdAt)?.toISOString() || null,
+      updatedAt: toDateSafe(doc.data()?.updatedAt)?.toISOString() || null,
     } as TagData));
 
     // Filter by category if specified
@@ -87,7 +85,7 @@ export async function POST(request: NextRequest) {
       updatedAt: new Date()
     };
 
-    const tagRef = await addDoc(collection(db, 'tags'), tagData);
+    const tagRef = await adminDb.collection('tags').add(tagData);
 
     return NextResponse.json({ 
       success: true, 
@@ -111,8 +109,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Tag ID is required' }, { status: 400 });
     }
 
-    const tagRef = doc(db, 'tags', tagId);
-    await updateDoc(tagRef, {
+    await adminDb.collection('tags').doc(tagId).update({
       count: incrementValue || 1,
       updatedAt: new Date()
     });

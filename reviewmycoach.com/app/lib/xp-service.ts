@@ -7,8 +7,6 @@
  * 3. Auto-unlock eligible tier cards
  */
 
-import { getDataConnect } from 'firebase/data-connect';
-import { initializeApp, getApps } from 'firebase/app';
 import {
   calculateCoachXP,
   getCoachTier,

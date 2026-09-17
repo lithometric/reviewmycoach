@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { toDateSafe } from '../../../lib/pgdb';
 
 // Function to get Firebase instance
 async function getFirebaseDb() {
@@ -54,7 +55,7 @@ export async function GET(request: NextRequest) {
     const allReviewsPromises = coachesSnapshot.docs.map(async (coachDoc) => {
       try {
         const coachId = coachDoc.id;
-        const coachData = coachDoc.data();
+        const coachData = coachDoc.data() as Record<string, any>;
         
         console.log(`Fetching reviews for coach: ${coachId}`);
 
@@ -75,7 +76,7 @@ export async function GET(request: NextRequest) {
         console.log(`Found ${reviewsSnapshot.docs.length} reviews for coach: ${coachId}`);
 
         return reviewsSnapshot.docs.map(reviewDoc => {
-          const reviewData = reviewDoc.data();
+          const reviewData = reviewDoc.data() as Record<string, any>;
           return {
             id: reviewDoc.id,
             coachId,
@@ -85,7 +86,7 @@ export async function GET(request: NextRequest) {
             rating: reviewData.rating || 5,
             reviewText: reviewData.reviewText || '',
             sport: reviewData.sport || null,
-            createdAt: reviewData.createdAt?.toDate()?.toISOString() || new Date().toISOString()
+            createdAt: toDateSafe(reviewData.createdAt)?.toISOString() || new Date().toISOString()
           };
         });
       } catch (error) {

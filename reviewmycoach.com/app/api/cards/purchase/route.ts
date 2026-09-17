@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
-import { purchaseCard, updateCoachActiveCard, getMarketplaceCard, getCoachByUsername } from '../../../lib/dataconnect';
-import { verifyFirebaseToken } from '../../../lib/firebase-admin-server';
+import { adminDb, verifyFirebaseToken } from '../../../lib/firebase-admin-server';
 import { v4 as uuidv4 } from 'uuid';
 import Stripe from 'stripe';
 
@@ -13,34 +10,6 @@ function getStripeInstance() {
   }
   return new Stripe(process.env.STRIPE_SECRET_KEY, {
     apiVersion: '2025-05-28.basil',
-  });
-}
-
-// Lazy initialization function for DataConnect
-function getDataConnectInstance() {
-  // Check if required environment variables are available
-  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY || !process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID) {
-    throw new Error('Firebase configuration is not available');
-  }
-
-  let clientApp;
-  if (getApps().length === 0) {
-    clientApp = initializeApp({
-      apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-      authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-      storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-      appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-    });
-  } else {
-    clientApp = getApps()[0];
-  }
-
-  return getDataConnect(clientApp, {
-    connector: 'reviewmycoach',
-    location: 'us-east4',
-    service: 'review-my-coach-service'
   });
 }
 
@@ -70,16 +39,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get DataConnect instance
-    const dataConnect = getDataConnectInstance();
-
     // Get the marketplace card
-    const cardResult = await getMarketplaceCard(dataConnect, { id: cardId });
-    if (!cardResult.data.marketplaceCard) {
+    const cardDoc = await adminDb.collection('cards').doc(cardId).get();
+    if (!cardDoc.exists) {
       return NextResponse.json({ error: 'Card not found' }, { status: 404 });
     }
 
-    const card = cardResult.data.marketplaceCard;
+    const card = cardDoc.data() as { name?: string; imageUrl?: string; price?: number };
 
     // Get Stripe instance
     const stripe = getStripeInstance();
@@ -110,14 +76,19 @@ export async function POST(request: NextRequest) {
 
     // Add card to user's collection
     const userCardId = uuidv4();
-    await purchaseCard(dataConnect, {
+    const nowIso = new Date().toISOString();
+    await adminDb.collection('user_cards').doc(userCardId).set({
       id: userCardId,
       userId: decodedToken.uid,
       coachUsername: coachUsername,
       cardId: cardId,
+      cardType: 'marketplace',
       cardName: card.name || '',
       cardImageUrl: card.imageUrl || '',
       stripePaymentId: paymentIntent.id,
+      isActive: false,
+      purchasedAt: nowIso,
+      createdAt: nowIso,
     });
 
     return NextResponse.json({

@@ -1,31 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
-import { getCoach, updateCoach } from '../../../lib/dataconnect';
-import { verifyFirebaseToken } from '../../../lib/firebase-admin-server';
+import { adminDb, verifyFirebaseToken } from '../../../lib/firebase-admin-server';
 
-// Initialize Firebase Client for Data Connect
-let clientApp;
-if (getApps().length === 0) {
-  clientApp = initializeApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getApps()[0];
-}
-
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service'
-});
-
-// GET - Fetch coach profile by ID using Data Connect
+// GET - Fetch coach profile by ID
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -33,9 +9,9 @@ export async function GET(
   try {
     const { id: coachId } = await params;
 
-    // Fetch coach from Data Connect
-    const result = await getCoach(dataConnect, { id: coachId });
-    const coach = result.data.coach;
+    // Fetch coach from Postgres
+    const coachDoc = await adminDb.collection('coaches').doc(coachId).get();
+    const coach: any = coachDoc.exists ? { id: coachDoc.id, ...coachDoc.data() } : null;
 
     if (!coach) {
       return NextResponse.json({ error: 'Coach not found' }, { status: 404 });
@@ -110,8 +86,9 @@ export async function PUT(
     const userId = decodedToken.uid;
 
     // Fetch coach to verify ownership
-    const result = await getCoach(dataConnect, { id: coachId });
-    const coach = result.data.coach;
+    const coachRef = adminDb.collection('coaches').doc(coachId);
+    const coachDoc = await coachRef.get();
+    const coach = coachDoc.exists ? coachDoc.data() : null;
 
     if (!coach) {
       return NextResponse.json({ error: 'Coach not found' }, { status: 404 });
@@ -128,18 +105,12 @@ export async function PUT(
       return NextResponse.json({ error: 'Hourly rate must be between 0 and 1000' }, { status: 400 });
     }
 
-    // Update via Data Connect
-    await updateCoach(dataConnect, {
-      id: coachId,
-      bio: updates.bio,
-      sports: updates.sports,
-      location: updates.location,
-      hourlyRate: updates.hourlyRate,
-      profileImage: updates.profileImage,
-      isPublic: updates.isPublic,
-      activeCardId: updates.activeCardId,
-      activeCardImageUrl: updates.activeCardImageUrl,
-    });
+    // Update in Postgres — only apply provided fields
+    const patch: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    for (const field of ['bio', 'sports', 'location', 'hourlyRate', 'profileImage', 'isPublic', 'activeCardId', 'activeCardImageUrl'] as const) {
+      if (updates[field] !== undefined) patch[field] = updates[field];
+    }
+    await coachRef.update(patch);
 
     return NextResponse.json({
       success: true,

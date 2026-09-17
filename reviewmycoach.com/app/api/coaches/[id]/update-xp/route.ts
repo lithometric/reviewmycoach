@@ -1,38 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
-import {
-  getCoachByUsername,
-  getUserCards,
-  unlockTierCard,
-  updateCoachTotalXp,
-} from '../../../../lib/dataconnect';
+import { adminDb } from '../../../../lib/firebase-admin-server';
+import { sqlQuery } from '../../../../lib/pgdb';
 import {
   calculateXpFromCoach,
   getEligibleTierCards,
   TIER_CARDS,
 } from '../../../../lib/xp-service';
-
-// Initialize Firebase
-let clientApp;
-if (getApps().length === 0) {
-  clientApp = initializeApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getApps()[0];
-}
-
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service',
-});
 
 /**
  * POST - Recalculate XP for a coach and auto-unlock eligible tier cards
@@ -59,12 +32,14 @@ export async function POST(
 
     // If coach data not provided, fetch it
     if (!coach && username) {
-      const result = await getCoachByUsername(dataConnect, { username });
-      const coaches = result.data.coaches || [];
-      if (coaches.length === 0) {
+      const result = await sqlQuery(
+        `SELECT id, data FROM coaches WHERE id = $1 OR data->>'username' = $1 LIMIT 1`,
+        [username]
+      );
+      if (result.rows.length === 0) {
         return NextResponse.json({ error: 'Coach not found' }, { status: 404 });
       }
-      coach = coaches[0];
+      coach = { id: result.rows[0].id, ...result.rows[0].data };
       coachUsername = coach.username;
       coachUserId = coach.userId;
     }
@@ -81,9 +56,9 @@ export async function POST(
     const previousXp = coach.totalXp || 0;
 
     // Update totalXp in database
-    await updateCoachTotalXp(dataConnect, {
-      id: coachId,
+    await adminDb.collection('coaches').doc(coachId).update({
       totalXp: totalXp,
+      updatedAt: new Date().toISOString(),
     });
 
     // Get eligible tier cards
@@ -93,10 +68,11 @@ export async function POST(
     let existingCardIds = new Set<string>();
     if (coachUserId) {
       try {
-        const userCardsResult = await getUserCards(dataConnect, {
-          userId: coachUserId,
-        });
-        const userCards = userCardsResult.data.userCards || [];
+        const userCardsSnapshot = await adminDb
+          .collection('user_cards')
+          .where('userId', '==', coachUserId)
+          .get();
+        const userCards = userCardsSnapshot.docs.map((d) => d.data());
         existingCardIds = new Set(
           userCards
             .filter((c: any) => c.cardType === 'tier')
@@ -114,13 +90,19 @@ export async function POST(
       if (!existingCardIds.has(card.id) && coachUserId && coachUsername) {
         try {
           const userCardId = `uc_${coachUserId}_${card.id}_${Date.now()}`;
-          await unlockTierCard(dataConnect, {
+          const nowIso = new Date().toISOString();
+          await adminDb.collection('user_cards').doc(userCardId).set({
             id: userCardId,
             userId: coachUserId,
             coachUsername: coachUsername,
             cardId: card.id,
+            cardType: 'tier',
             cardName: card.tierName,
             cardImageUrl: card.imageUrl,
+            isActive: false,
+            unlockedAt: nowIso,
+            purchasedAt: nowIso,
+            createdAt: nowIso,
           });
           newlyUnlocked.push(card);
           console.log(`✅ Unlocked ${card.tierName} for ${coachUsername}`);

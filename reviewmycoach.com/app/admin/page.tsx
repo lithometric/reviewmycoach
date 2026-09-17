@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../lib/hooks/useAuth';
-import { doc as firestoreDoc, getDoc, updateDoc, deleteDoc, collection, query as firestoreQuery, where as firestoreWhere, orderBy as firestoreOrderBy, getDocs } from 'firebase/firestore';
-import { db } from '../lib/firebase-client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -53,20 +51,25 @@ export default function AdminDashboard() {
 
   const checkAdminAccess = async (userId: string) => {
     try {
-      const userRef = firestoreDoc(db, 'users', userId);
-      const userSnap = await getDoc(userRef);
-      
-      if (userSnap.exists()) {
-        const userData = userSnap.data() as UserData;
-        if (userData.role !== 'admin') {
-          router.push('/dashboard');
-          return;
-        }
-        setUserRole(userData.role);
-        await fetchReports();
-      } else {
+      const response = await fetch(`/api/auth/user-role?userId=${userId}`);
+
+      if (response.status === 404) {
         router.push('/onboarding');
+        return;
       }
+
+      if (!response.ok) {
+        router.push('/dashboard');
+        return;
+      }
+
+      const userData = await response.json();
+      if (userData.role !== 'admin') {
+        router.push('/dashboard');
+        return;
+      }
+      setUserRole(userData.role);
+      await fetchReports();
     } catch (error) {
       console.error('Error checking admin access:', error);
       router.push('/dashboard');
@@ -77,29 +80,33 @@ export default function AdminDashboard() {
 
   const fetchReports = async () => {
     try {
-      // Fetch reports from Firestore
-      const reportsRef = collection(db, 'reports');
-      const q = firestoreQuery(
-        reportsRef,
-        firestoreWhere('status', '==', 'pending'),
-        firestoreOrderBy('createdAt', 'desc')
-      );
-      const querySnapshot = await getDocs(q);
+      if (!user) return;
+
+      const token = await user.getIdToken();
+      const response = await fetch('/api/admin/reports', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      if (!response.ok) {
+        console.error('Failed to fetch reports');
+        return;
+      }
+
+      const { reports: rawReports } = await response.json();
       const reportsData: Report[] = [];
 
-      for (const docSnapshot of querySnapshot.docs) {
-        const data = docSnapshot.data();
+      for (const data of rawReports as any[]) {
         const reportData: Report = {
-          id: docSnapshot.id,
-          reporter_id: data.reporterId || data.reporter_id,
-          reported_item_type: data.reportedItemType || data.reported_item_type,
-          reported_item_id: data.reportedItemId || data.reported_item_id,
+          id: data.id,
+          reporter_id: data.reporterId,
+          reported_item_type: data.reportedItemType,
+          reported_item_id: data.reportedItemId,
           reason: data.reason,
           description: data.description,
           status: data.status,
-          created_at: data.createdAt || data.created_at,
+          created_at: data.createdAt,
         };
-        
+
         // Fetch additional review data if it's a review report
         if (reportData.reported_item_type === 'review') {
           try {
@@ -141,11 +148,14 @@ export default function AdminDashboard() {
     
     setActionLoading(reportId);
     try {
-      const reportRef = firestoreDoc(db, 'reports', reportId);
-      await updateDoc(reportRef, {
-        status: action === 'approve' ? 'approved' : 'rejected',
-        reviewedAt: new Date(),
-        reviewedBy: user.uid
+      const token = await user.getIdToken();
+      await fetch(`/api/admin/reports/${reportId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action }),
       });
 
       if (action === 'approve' && shouldDeleteReview) {

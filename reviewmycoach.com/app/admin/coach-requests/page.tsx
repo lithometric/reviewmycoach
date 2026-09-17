@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../lib/hooks/useAuth';
-import { doc as firestoreDoc, getDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase-client';
 import { useRouter } from 'next/navigation';
 import LoadingSpinner from '../../components/LoadingSpinner';
 
@@ -48,20 +46,25 @@ export default function CoachRequestsAdmin() {
 
   const checkAdminAccess = async (userId: string) => {
     try {
-      const userRef = firestoreDoc(db, 'users', userId);
-      const userSnap = await getDoc(userRef);
+      const response = await fetch(`/api/auth/user-role?userId=${userId}`);
 
-      if (userSnap.exists()) {
-        const userData = userSnap.data();
-        if (userData.role !== 'admin') {
-          router.push('/dashboard');
-          return;
-        }
-        setUserRole(userData.role);
-        await fetchRequests();
-      } else {
+      if (response.status === 404) {
         router.push('/onboarding');
+        return;
       }
+
+      if (!response.ok) {
+        router.push('/dashboard');
+        return;
+      }
+
+      const userData = await response.json();
+      if (userData.role !== 'admin') {
+        router.push('/dashboard');
+        return;
+      }
+      setUserRole(userData.role);
+      await fetchRequests();
     } catch (error) {
       console.error('Error checking admin access:', error);
       router.push('/dashboard');

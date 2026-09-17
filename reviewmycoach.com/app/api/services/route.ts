@@ -1,28 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDataConnect } from 'firebase/data-connect';
-import { initializeApp, getApps } from 'firebase/app';
-import { getCoachServicesById, getActiveCoachServicesById } from '../../lib/dataconnect';
-
-// Initialize Firebase Client for DataConnect
-let clientApp;
-if (getApps().length === 0) {
-  clientApp = initializeApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getApps()[0];
-}
-
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service'
-});
+import { adminDb } from '../../lib/firebase-admin-server';
 
 // Function to get Firebase and Stripe instances
 async function getInstances() {
@@ -223,35 +200,40 @@ export async function GET(req: NextRequest) {
 
     let services: Service[] = [];
 
-    // Fetch from Firebase DataConnect
+    // Fetch from Postgres services table
     if (coachId) {
       try {
-        const result = isActive === 'true' 
-          ? await getActiveCoachServicesById(dataConnect, { coachId, limit, offset: 0 })
-          : await getCoachServicesById(dataConnect, { coachId, limit, offset: 0 });
-        
-        services = (result.data.services || []).map((service: any): Service => ({
-          id: service.id,
-          coachId: service.coachId,
-          coachUsername: service.coachUsername,
-          title: service.title,
-          description: service.description,
-          price: service.price ? parseFloat(service.price.toString()) : 0,
-          duration: service.duration || 0,
-          category: category || null, // Category not in schema yet
-          isActive: service.isActive !== false,
-          totalBookings: service.totalBookings || 0,
-          createdAt: service.createdAt || null,
-          updatedAt: service.updatedAt || null,
-        }));
+        let query = adminDb.collection('services').where('coachId', '==', coachId);
+        if (isActive === 'true') {
+          query = query.where('isActive', '==', true);
+        }
+        const snapshot = await query.limit(limit).get();
 
-        // Filter by category if provided (client-side since it's not in schema)
+        services = snapshot.docs.map((doc): Service => {
+          const service: any = { id: doc.id, ...doc.data() };
+          return {
+            id: service.id,
+            coachId: service.coachId,
+            coachUsername: service.coachUsername,
+            title: service.title,
+            description: service.description,
+            price: service.price ? parseFloat(service.price.toString()) : 0,
+            duration: service.duration || 0,
+            category: category || service.category || null,
+            isActive: service.isActive !== false,
+            totalBookings: service.totalBookings || 0,
+            createdAt: service.createdAt || null,
+            updatedAt: service.updatedAt || null,
+          };
+        });
+
+        // Filter by category if provided
         if (category) {
           services = services.filter((s) => s.category === category);
         }
       } catch (error: any) {
-        console.error('Error fetching services from DataConnect:', error);
-        // Return empty array if DataConnect fails
+        console.error('Error fetching services from Postgres:', error);
+        // Return empty array if the query fails
         services = [];
       }
     }

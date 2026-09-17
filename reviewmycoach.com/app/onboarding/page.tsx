@@ -1,9 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
-import { User } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase-client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '../lib/hooks/useAuth';
 
@@ -88,11 +85,19 @@ function OnboardingContent() {
 
     setLoading(true);
     try {
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, { 
-        username: username.toLowerCase(),
-        updatedAt: new Date()
-      }, { merge: true });
+      const token = await user.getIdToken();
+      const response = await fetch('/api/onboarding/user', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ username: username.toLowerCase() }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save username');
+      }
 
       goToNextStep();
     } catch (error: any) {
@@ -110,17 +115,25 @@ function OnboardingContent() {
     try {
       if (!user) return;
 
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, { 
-        role,
-        updatedAt: new Date()
-      }, { merge: true });
+      const token = await user.getIdToken();
+      await fetch('/api/onboarding/user', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ role }),
+      });
 
       if (role === 'student') {
-        await setDoc(userRef, { 
-          onboardingCompleted: true,
-          updatedAt: new Date()
-        }, { merge: true });
+        await fetch('/api/onboarding/user', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ role, onboardingCompleted: true }),
+        });
 
         router.push('/dashboard');
       } else {
@@ -183,12 +196,14 @@ function OnboardingContent() {
         throw new Error('Failed to claim profile');
       }
 
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, { 
-        onboardingCompleted: true,
-        role: 'coach',
-        updatedAt: new Date()
-      }, { merge: true });
+      await fetch('/api/onboarding/user', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ onboardingCompleted: true, role: 'coach' }),
+      });
 
       router.push('/dashboard/coach');
     } catch (error) {
@@ -209,13 +224,16 @@ function OnboardingContent() {
     setLoading(true);
     
     try {
-      const userRef = doc(db, 'users', user.uid);
-      const userDoc = await getDoc(userRef);
-      const userData = userDoc.data();
+      const token = await user.getIdToken();
+
+      const userResponse = await fetch('/api/onboarding/user', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const userData = userResponse.ok ? await userResponse.json() : null;
 
       // Get username from state or user data
       const finalUsername = username || userData?.username || user.email?.split('@')[0];
-      
+
       if (!finalUsername) {
         throw new Error('Username is required. Please go back and set a username.');
       }
@@ -226,7 +244,6 @@ function OnboardingContent() {
         email: user.email
       });
 
-      const token = await user.getIdToken();
       const response = await fetch('/api/coaches', {
         method: 'POST',
         headers: {
@@ -252,15 +269,21 @@ function OnboardingContent() {
       const responseData = await response.json();
       console.log('✅ Coach profile created:', responseData);
 
-      // Update user document in Firestore with username
-      await setDoc(userRef, { 
-        username: finalUsername.toLowerCase(),
-        onboardingCompleted: true,
-        role: 'coach',
-        updatedAt: new Date()
-      }, { merge: true });
+      // Update user document with username and coach role
+      await fetch('/api/onboarding/user', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          username: finalUsername.toLowerCase(),
+          onboardingCompleted: true,
+          role: 'coach',
+        }),
+      });
 
-      console.log('✅ User document updated in Firestore');
+      console.log('✅ User document updated');
 
       // Wait a bit to ensure everything is saved
       await new Promise(resolve => setTimeout(resolve, 1000));

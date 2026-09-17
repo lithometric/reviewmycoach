@@ -1,29 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCoachByUsername } from '../../../../lib/dataconnect';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
 import { adminDb } from '../../../../lib/firebase-admin-server';
-
-// Initialize Firebase Client for Data Connect
-let clientApp;
-if (getApps().length === 0) {
-  clientApp = initializeApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getApps()[0];
-}
-
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service'
-});
+import { sqlQuery } from '../../../../lib/pgdb';
 
 export async function GET(
   request: NextRequest,
@@ -54,11 +31,14 @@ export async function GET(
       .get();
     const userExists = !usersSnapshot.empty;
 
-    // Check if username is already taken in Data Connect coaches
+    // Check if username is already taken in the coaches table
     let coachExists = false;
     try {
-      const result = await getCoachByUsername(dataConnect, { username: usernameLower });
-      coachExists = result.data.coaches && result.data.coaches.length > 0;
+      const result = await sqlQuery(
+        `SELECT 1 FROM coaches WHERE LOWER(data->>'username') = $1 LIMIT 1`,
+        [usernameLower]
+      );
+      coachExists = result.rows.length > 0;
     } catch (error) {
       // If error, assume available (fail open)
       console.error('Error checking coach username:', error);

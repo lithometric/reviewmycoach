@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth, db } from '../../lib/firebase-admin';
+import { toDateSafe } from '../../lib/pgdb';
 
 // GET - Fetch messages for a conversation
 export async function GET(request: NextRequest) {
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest) {
       const messages = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate().toISOString(),
+        createdAt: toDateSafe(doc.data()?.createdAt)?.toISOString(),
       })).reverse(); // Reverse to show oldest first
 
       return NextResponse.json({ messages });
@@ -37,8 +38,8 @@ export async function GET(request: NextRequest) {
       const conversations = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate().toISOString(),
-        lastMessageAt: doc.data().lastMessageAt?.toDate().toISOString(),
+        createdAt: toDateSafe(doc.data()?.createdAt)?.toISOString(),
+        lastMessageAt: toDateSafe(doc.data()?.lastMessageAt)?.toISOString(),
       }));
 
       return NextResponse.json({ conversations });

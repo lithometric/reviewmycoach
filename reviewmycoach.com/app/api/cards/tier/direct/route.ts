@@ -1,30 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
 import { v4 as uuidv4 } from 'uuid';
-import { getCoachCards, unlockTierCard } from '../../../../lib/dataconnect';
+import { adminDb } from '../../../../lib/firebase-admin-server';
 import { TIER_CARDS, getEligibleTierCards } from '../../../../lib/xp-service';
 
-// Initialize Firebase Client
-let clientApp;
-if (getApps().length === 0) {
-  clientApp = initializeApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getApps()[0];
+/**
+ * Fetch a coach's cards (user_cards) by coach username.
+ */
+async function fetchCoachCards(coachUsername: string): Promise<any[]> {
+  const snapshot = await adminDb
+    .collection('user_cards')
+    .where('coachUsername', '==', coachUsername)
+    .get();
+  return snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
-
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service'
-});
 
 /**
  * GET /api/cards/tier/direct?userId=xxx&username=xxx&xp=14250
@@ -56,9 +44,8 @@ export async function GET(request: NextRequest) {
     let userTierCards: any[] = [];
     try {
       console.log('🔍 Fetching cards for username:', username);
-      const result = await getCoachCards(dataConnect, { coachUsername: username });
-      console.log('🔍 GetCoachCards result:', JSON.stringify(result.data, null, 2));
-      const allUserCards = result.data.userCards || [];
+      const allUserCards = await fetchCoachCards(username);
+      console.log('🔍 GetCoachCards result:', JSON.stringify(allUserCards, null, 2));
       console.log('🔍 All user cards from Data Connect:', allUserCards.length, allUserCards.map((c: any) => ({ cardId: c.cardId, cardName: c.cardName })));
       console.log('🔍 Tier card IDs to match:', Array.from(tierCardIds));
       
@@ -178,13 +165,13 @@ export async function POST(request: NextRequest) {
     const tierCardIdsSet = new Set(tierCards.map(tc => tc.id));
     let ownedCardIds = new Set<string>();
     try {
-      const result = await getCoachCards(dataConnect, { coachUsername: username });
-      const ownedCards = (result.data.userCards || [])
+      const allUserCards = await fetchCoachCards(username);
+      const ownedCards = allUserCards
         .filter((card: any) => tierCardIdsSet.has(card.cardId)) // Only tier cards
         .map((card: any) => card.cardId);
       ownedCardIds = new Set(ownedCards);
     } catch (error) {
-      console.error('Error fetching owned cards from Data Connect:', error);
+      console.error('Error fetching owned cards:', error);
       // Continue with empty set - will try to unlock cards
     }
 
@@ -205,13 +192,19 @@ export async function POST(request: NextRequest) {
     for (const card of cardsToUnlock) {
       try {
         const userCardId = uuidv4();
-        await unlockTierCard(dataConnect, {
+        const nowIso = new Date().toISOString();
+        await adminDb.collection('user_cards').doc(userCardId).set({
           id: userCardId,
           userId: userId,
           coachUsername: username,
           cardId: card.id,
+          cardType: 'tier',
           cardName: card.tierName,
           cardImageUrl: card.imageUrl,
+          isActive: false,
+          unlockedAt: nowIso,
+          purchasedAt: nowIso,
+          createdAt: nowIso,
         });
 
         newlyUnlockedCards.push({

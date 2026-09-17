@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchPublicCoaches, filterCoaches } from '../../lib/firebase-dataconnect-server';
-import { verifyFirebaseToken } from '../../lib/firebase-admin-server';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
-import { createCoach } from '../../lib/dataconnect';
+import { verifyFirebaseToken, adminDb } from '../../lib/firebase-admin-server';
 import {
   calculateCoachXP,
   type XPCalculationInputs,
@@ -34,27 +31,6 @@ interface CoachData {
   xp?: number;
   [key: string]: any;
 }
-
-// Initialize Firebase Client for Data Connect
-let clientApp;
-if (getApps().length === 0) {
-  clientApp = initializeApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getApps()[0];
-}
-
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service'
-});
 
 // GET - Fetch coaches with filtering and pagination
 export async function GET(request: NextRequest) {
@@ -293,7 +269,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Username is required' }, { status: 400 });
     }
 
-    console.log('✅ Creating coach in Data Connect:', {
+    console.log('✅ Creating coach in Postgres:', {
       id: coachId,
       username: username,
       userId: userId,
@@ -301,16 +277,25 @@ export async function POST(request: NextRequest) {
       email: userEmail || body.email || ''
     });
 
-    // Create coach in Data Connect
-    const result = await createCoach(dataConnect, {
+    // Ensure a coach with this id doesn't already exist
+    const existing = await adminDb.collection('coaches').doc(coachId).get();
+    if (existing.exists) {
+      throw new Error('Coach profile already exists');
+    }
+
+    // Create coach in Postgres
+    const nowIso = new Date().toISOString();
+    await adminDb.collection('coaches').doc(coachId).set({
       id: coachId,
       username: username,
       userId: userId,
       displayName: body.displayName,
       email: userEmail || body.email || '',
+      createdAt: nowIso,
+      updatedAt: nowIso,
     });
 
-    console.log('✅ Coach created successfully in Data Connect:', result);
+    console.log('✅ Coach created successfully in Postgres:', coachId);
 
     return NextResponse.json({ 
       success: true,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth, db } from '../../lib/firebase-admin';
+import { toDateSafe } from '../../lib/pgdb';
 
 // GET - Fetch available jobs (Coach Pro required)
 export async function GET(request: NextRequest) {
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
           let hasCoachPro = false;
           if (subscription) {
             const now = new Date();
-            const expiresAt = subscription.expiresAt ? subscription.expiresAt.toDate() : null;
+            const expiresAt = toDateSafe(subscription.expiresAt);
             hasCoachPro = subscription.isActive === true && 
                          subscription.plan === 'pro' && 
                          (!expiresAt || expiresAt > now);
@@ -73,9 +74,9 @@ export async function GET(request: NextRequest) {
     const jobs = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
-      createdAt: doc.data().createdAt?.toDate().toISOString(),
-      deadline: doc.data().deadline?.toDate().toISOString(),
-      updatedAt: doc.data().updatedAt?.toDate().toISOString(),
+      createdAt: toDateSafe(doc.data()?.createdAt)?.toISOString(),
+      deadline: toDateSafe(doc.data()?.deadline)?.toISOString(),
+      updatedAt: toDateSafe(doc.data()?.updatedAt)?.toISOString(),
     }));
 
     return NextResponse.json({ jobs, total: snapshot.size });

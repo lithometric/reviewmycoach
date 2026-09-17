@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
-import { auth, db } from '../../../lib/firebase-client';
-import { doc, getDoc } from 'firebase/firestore';
+import { auth } from '../../../lib/firebase-client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -63,15 +62,14 @@ export default function ServicesPage() {
   const fetchServices = async (user: User) => {
     try {
       // Get the user's profile to find their username
-      const userRef = doc(db, 'users', user.uid);
-      const userSnap = await getDoc(userRef);
-      
-      if (!userSnap.exists()) {
+      const userRes = await fetch(`/api/auth/user-role?userId=${encodeURIComponent(user.uid)}`);
+
+      if (!userRes.ok) {
         console.error('User profile not found');
         return;
       }
 
-      const userData = userSnap.data();
+      const userData = await userRes.json();
       const username = userData.username;
 
       if (!username) {

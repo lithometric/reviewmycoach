@@ -1,29 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyFirebaseToken } from '../../../lib/firebase-admin-server';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
-import { getClaimableCoaches } from '../../../lib/dataconnect';
-
-// Initialize Firebase Client for Data Connect
-let clientApp;
-if (getApps().length === 0) {
-  clientApp = initializeApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getApps()[0];
-}
-
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service'
-});
+import { sqlQuery } from '../../../lib/pgdb';
 
 // GET - Find claimable coach profiles by email
 export async function GET(req: NextRequest) {
@@ -44,9 +21,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Email not found in token' }, { status: 400 });
     }
 
-    // Find unclaimed coach profiles with matching email from Data Connect
-    const result = await getClaimableCoaches(dataConnect, { email: userEmail });
-    const coaches = result.data.coaches || [];
+    // Find unclaimed coach profiles with matching email from Postgres
+    const result = await sqlQuery(
+      `SELECT id, data FROM coaches
+       WHERE LOWER(data->>'email') = LOWER($1)
+         AND COALESCE((data->>'isClaimed')::boolean, false) = false
+       LIMIT 100`,
+      [userEmail]
+    );
+    const coaches = result.rows.map((r: { id: string; data: Record<string, any> }) => ({ id: r.id, ...r.data }));
 
     const claimableProfiles = coaches.map((coach: any) => ({
       id: coach.id,

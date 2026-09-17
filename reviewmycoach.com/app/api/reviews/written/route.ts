@@ -15,12 +15,12 @@ export async function GET(request: NextRequest) {
 
     // Global reviews collection stores user-written reviews
     // We count documents where email field matches, or userId matches if present
-    let query = db.collection('reviews') as FirebaseFirestore.Query<FirebaseFirestore.DocumentData>;
-    if (userId) {
-      query = query.where('studentId', '==', userId);
-    } else if (email) {
-      query = query.where('email', '==', email);
-    }
+    const base = db.collection('reviews');
+    const query = userId
+      ? base.where('studentId', '==', userId)
+      : email
+        ? base.where('email', '==', email)
+        : base;
 
     const snapshot = await query.get();
 
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     let lastReviewedAt: string | undefined;
     snapshot.forEach((doc) => {
       total += 1;
-      const createdAt = (doc.data().createdAt as any)?.toDate?.() ?? (doc.data().createdAt ? new Date(doc.data().createdAt) : null);
+      const createdAt = (doc.data()?.createdAt as any)?.toDate?.() ?? (doc.data()?.createdAt ? new Date(doc.data()?.createdAt) : null);
       if (createdAt) {
         const iso = createdAt.toISOString();
         if (!lastReviewedAt || iso > lastReviewedAt) lastReviewedAt = iso;

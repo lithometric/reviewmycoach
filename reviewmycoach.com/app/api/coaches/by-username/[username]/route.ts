@@ -1,30 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
-import { getCoachByUsername, updateCoach, updateCoachTotalXp } from '../../../../lib/dataconnect';
-import { verifyFirebaseToken } from '../../../../lib/firebase-admin-server';
+import { adminDb, verifyFirebaseToken } from '../../../../lib/firebase-admin-server';
+import { sqlQuery } from '../../../../lib/pgdb';
 import { hasXpAffectingChanges, calculateXpFromCoach } from '../../../../lib/xp-service';
 
-// Initialize Firebase Client for Data Connect
-let clientApp;
-if (getApps().length === 0) {
-  clientApp = initializeApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getApps()[0];
+async function findCoachByUsername(username: string): Promise<{ id: string; [key: string]: any } | null> {
+  const result = await sqlQuery(
+    `SELECT id, data FROM coaches WHERE id = $1 OR LOWER(data->>'username') = $1 LIMIT 1`,
+    [username]
+  );
+  if (result.rows.length === 0) return null;
+  return { id: result.rows[0].id, ...result.rows[0].data };
 }
-
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service'
-});
 
 export async function GET(
   request: NextRequest,
@@ -34,12 +20,10 @@ export async function GET(
     const { username: rawUsername } = await params;
     const username = rawUsername.toLowerCase();
 
-    // Fetch coach from Data Connect
-    const result = await getCoachByUsername(dataConnect, { username });
-    
-    if (result.data.coaches && result.data.coaches.length > 0) {
-      const coach = result.data.coaches[0];
-      
+    // Fetch coach from Postgres
+    const coach = await findCoachByUsername(username);
+
+    if (coach) {
       return NextResponse.json({
         coach: {
           id: coach.id,
@@ -113,29 +97,22 @@ export async function PUT(
     const body = await request.json();
 
     // Verify the coach belongs to the user
-    const result = await getCoachByUsername(dataConnect, { username });
-    if (!result.data.coaches || result.data.coaches.length === 0) {
+    const coach = await findCoachByUsername(username);
+    if (!coach) {
       return NextResponse.json({ error: 'Coach not found' }, { status: 404 });
     }
 
-    const coach = result.data.coaches[0];
     if (coach.userId !== decodedToken.uid) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
 
-    // Update coach profile via Data Connect (handles both profile edits AND card activation)
-    await updateCoach(dataConnect, {
-      id: coach.id,
-      bio: body.bio,
-      sports: body.sports,
-      location: body.location,
-      hourlyRate: body.hourlyRate,
-      profileImage: body.profileImage,
-      isPublic: body.isPublic,
-      activeCardId: body.activeCardId,
-      activeCardImageUrl: body.activeCardImageUrl,
-      school: body.school,
-    });
+    // Update coach profile (handles both profile edits AND card activation).
+    // Only apply fields that were provided.
+    const patch: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    for (const field of ['bio', 'sports', 'location', 'hourlyRate', 'profileImage', 'isPublic', 'activeCardId', 'activeCardImageUrl', 'school'] as const) {
+      if (body[field] !== undefined) patch[field] = body[field];
+    }
+    await adminDb.collection('coaches').doc(coach.id).update(patch);
 
     // If XP-affecting fields changed, trigger XP recalculation
     if (hasXpAffectingChanges(body)) {
@@ -144,9 +121,9 @@ export async function PUT(
       const newTotalXp = calculateXpFromCoach(updatedCoach);
 
       try {
-        await updateCoachTotalXp(dataConnect, {
-          id: coach.id,
+        await adminDb.collection('coaches').doc(coach.id).update({
           totalXp: newTotalXp,
+          updatedAt: new Date().toISOString(),
         });
         console.log(`📊 Updated XP for ${username}: ${newTotalXp}`);
 
@@ -175,4 +152,3 @@ export async function PUT(
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
-

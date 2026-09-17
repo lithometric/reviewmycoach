@@ -3,8 +3,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../lib/hooks/useAuth';
 import { useRouter } from 'next/navigation';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase-client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Link from 'next/link';
 
@@ -62,34 +60,23 @@ export default function SubscriptionPage() {
     if (!user) return;
 
     try {
-      // First, get the user's username from their user profile
-      const userRef = doc(db, 'users', user.uid);
-      const userSnap = await getDoc(userRef);
-      
-      if (userSnap.exists()) {
-        const userData = userSnap.data();
-        const username = userData.username;
-        
-        if (username) {
-          // Fetch coach profile using username as document ID
-          const coachRef = doc(db, 'coaches', username.toLowerCase());
-          const coachDoc = await getDoc(coachRef);
-          
-          if (coachDoc.exists()) {
-            const data = coachDoc.data() as CoachProfile;
-            setCoachProfile(data);
-          } else {
-            // Coach profile not found with username, redirect to onboarding
-            router.push('/onboarding');
-            return;
-          }
+      // Resolve the coach's subscription state via the API (user doc -> coach doc)
+      const token = await user.getIdToken();
+      const response = await fetch('/api/user/coach-subscription', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.found && data.coach) {
+          setCoachProfile(data.coach as CoachProfile);
         } else {
-          // No username found, redirect to onboarding
+          // No username or coach profile found, redirect to onboarding
           router.push('/onboarding');
           return;
         }
       } else {
-        // User profile not found, redirect to onboarding
+        // Could not load profile, redirect to onboarding to be safe
         router.push('/onboarding');
         return;
       }

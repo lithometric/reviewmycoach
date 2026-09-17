@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../lib/hooks/useAuth';
-import { doc as firestoreDoc, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase-client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -26,11 +24,9 @@ export default function Dashboard() {
 
   const checkUserRole = useCallback(async (userId: string) => {
     try {
-      const userRef = firestoreDoc(db, 'users', userId);
-      const userSnap = await getDoc(userRef);
-      
-      if (userSnap.exists()) {
-        const userData = userSnap.data();
+      const response = await fetch(`/api/auth/user-role?userId=${encodeURIComponent(userId)}`);
+      if (response.ok) {
+        const userData = await response.json();
         setUserRole(userData.role || null);
       }
     } catch (error) {

@@ -1,35 +1,32 @@
 /**
- * Firebase Admin SDK for Server-Side Operations
- * 
- * This module initializes Firebase Admin for server-side use (API routes, middleware)
+ * Server-side auth + data access.
+ *
+ * Auth: Firebase ID-token verification (signature checked against Google's
+ * public certs — no service-account key required).
+ * Data: Railway Postgres via the Firestore-compatible shim in ./pgdb.
+ *
+ * NOTE: adminAuth management APIs (getUser, updateUser, deleteUser, link
+ * generation) require valid service-account credentials. The current key was
+ * revoked, so those calls will fail until a fresh key is configured — same as
+ * before this migration.
  */
-
 import { initializeApp, getApps, cert, App } from 'firebase-admin/app';
 import { getAuth, Auth } from 'firebase-admin/auth';
-import { getFirestore, Firestore } from 'firebase-admin/firestore';
+import { db as pgFirestore } from './pgdb';
 
 let adminApp: App;
 let adminAuth: Auth;
-let adminDb: Firestore;
 
 function formatPrivateKey(key: string): string {
-  // Remove surrounding quotes
   key = key.replace(/^["']+|["']+$/g, '');
-
-  // Replace literal \n with actual newlines
   key = key.replace(/\\n/g, '\n');
-
-  // Trim whitespace
   key = key.trim();
-
-  // Ensure proper PEM format
   if (!key.startsWith('-----BEGIN')) {
     key = '-----BEGIN PRIVATE KEY-----\n' + key;
   }
   if (!key.endsWith('-----')) {
     key = key + '\n-----END PRIVATE KEY-----';
   }
-
   return key;
 }
 
@@ -37,55 +34,39 @@ function initializeFirebaseAdmin() {
   if (getApps().length > 0) {
     adminApp = getApps()[0];
     adminAuth = getAuth(adminApp);
-    adminDb = getFirestore(adminApp);
-    return { app: adminApp, auth: adminAuth, db: adminDb };
+    return;
   }
 
-  try {
-    // Try to use service account file first
-    const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  const projectId =
+    process.env.FIREBASE_ADMIN_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'review-my-coach';
+  const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
 
-    if (serviceAccountPath) {
+  if (clientEmail && privateKey) {
+    try {
       adminApp = initializeApp({
-        credential: cert(serviceAccountPath),
+        credential: cert({ projectId, clientEmail, privateKey: formatPrivateKey(privateKey) }),
+        projectId,
       });
-    } else if (process.env.FIREBASE_ADMIN_PRIVATE_KEY) {
-      // Use environment variables
-      const privateKey = formatPrivateKey(process.env.FIREBASE_ADMIN_PRIVATE_KEY);
-
-      const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-      const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
-
-      if (!projectId || !clientEmail) {
-        throw new Error('Missing FIREBASE_ADMIN_PROJECT_ID or FIREBASE_ADMIN_CLIENT_EMAIL');
-      }
-
-      adminApp = initializeApp({
-        credential: cert({
-          projectId,
-          clientEmail,
-          privateKey,
-        }),
-      });
-    } else {
-      console.error('Firebase Admin credentials not configured');
-      throw new Error('Firebase Admin not configured');
+      adminAuth = getAuth(adminApp);
+      return;
+    } catch (error) {
+      console.warn('Firebase Admin cert init failed, falling back to projectId-only init:', error);
     }
-
-    adminAuth = getAuth(adminApp);
-    adminDb = getFirestore(adminApp);
-
-    return { app: adminApp, auth: adminAuth, db: adminDb };
-  } catch (error) {
-    console.error('Error initializing Firebase Admin:', error);
-    throw error;
   }
+
+  // projectId-only app: ID-token VERIFICATION still works (public certs);
+  // privileged auth-management APIs will not.
+  adminApp = initializeApp({ projectId });
+  adminAuth = getAuth(adminApp);
 }
 
-// Initialize on module load
-const { app, auth, db } = initializeFirebaseAdmin();
+initializeFirebaseAdmin();
 
-export { app as adminApp, auth as adminAuth, db as adminDb };
+// Postgres-backed Firestore-compatible database
+const adminDb = pgFirestore;
+
+export { adminApp, adminAuth, adminDb };
 
 /**
  * Verify Firebase ID token
@@ -103,4 +84,3 @@ export async function verifyFirebaseToken(token: string): Promise<{ uid: string;
     return null;
   }
 }
-

@@ -1,32 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
-import { getPublicCoaches, updateCoachTotalXp } from '../../../lib/dataconnect';
+import { fetchPublicCoaches } from '../../../lib/firebase-dataconnect-server';
+import { adminDb } from '../../../lib/firebase-admin-server';
 import { calculateCoachXP, type XPCalculationInputs } from '../../../lib/xp-calculator';
 
-// Initialize Firebase Client for Data Connect
-let clientApp;
-if (getApps().length === 0) {
-  clientApp = initializeApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getApps()[0];
-}
-
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service'
-});
-
 const BATCH_SIZE = 100; // Process 100 coaches at a time
-const CONCURRENT_UPDATES = 10; // Update 10 coaches in parallel (avoid Firebase 503)
+const CONCURRENT_UPDATES = 10; // Update 10 coaches in parallel
 
 /**
  * Process a batch of coaches in parallel
@@ -53,9 +31,9 @@ async function processBatch(coaches: any[]): Promise<{ updated: number; errors: 
 
         const xpResult = calculateCoachXP(inputs);
 
-        await updateCoachTotalXp(dataConnect, {
-          id: coach.id,
+        await adminDb.collection('coaches').doc(coach.id).update({
           totalXp: xpResult.total_xp,
+          updatedAt: new Date().toISOString(),
         });
 
         return { id: coach.id, xp: xpResult.total_xp };
@@ -108,13 +86,12 @@ export async function POST(request: NextRequest) {
     while (processedCount < limit) {
       const batchLimit = Math.min(BATCH_SIZE, limit - processedCount);
 
-      // Fetch batch of coaches
-      const result = await getPublicCoaches(dataConnect, {
+      // Fetch batch of coaches (fetchPublicCoaches paginates by page, not raw offset)
+      const page = Math.floor(currentOffset / batchLimit) + 1;
+      const coaches: any[] = await fetchPublicCoaches({
         limit: batchLimit,
-        offset: currentOffset
+        page,
       });
-
-      const coaches = result.data.coaches || [];
 
       if (coaches.length === 0) {
         console.log('No more coaches to process');
@@ -184,11 +161,8 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    // Fetch a small batch to estimate total
-    const result = await getPublicCoaches(dataConnect, { limit: 1, offset: 0 });
-
-    // Note: Data Connect doesn't have a count query, so we'd need to implement one
-    // For now, return instructions
+    // Fetch a small batch to verify connectivity
+    await fetchPublicCoaches({ limit: 1, page: 1 });
 
     return NextResponse.json({
       message: 'XP Recalculation Endpoint',

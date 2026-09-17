@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '../../lib/firebase-admin';
 import { db } from '../../lib/firebase-admin';
 import { createPaymentIntent } from '../../lib/stripe';
+import { toDateSafe } from '../../lib/pgdb';
 
 export async function POST(req: NextRequest) {
   try {
@@ -118,7 +119,7 @@ export async function POST(req: NextRequest) {
 
       if (!coachSnapshot.empty) {
         const coachDoc = coachSnapshot.docs[0];
-        const coachData = coachDoc.data();
+        const coachData = coachDoc.data() as Record<string, any>;
         const coachEmail = coachData.email;
 
         if (coachEmail) {
@@ -192,9 +193,9 @@ export async function GET(req: NextRequest) {
     const bookings = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
-      scheduledDate: doc.data().scheduledDate?.toDate().toISOString(),
-      createdAt: doc.data().createdAt?.toDate().toISOString(),
-      updatedAt: doc.data().updatedAt?.toDate().toISOString(),
+      scheduledDate: toDateSafe(doc.data()?.scheduledDate)?.toISOString(),
+      createdAt: toDateSafe(doc.data()?.createdAt)?.toISOString(),
+      updatedAt: toDateSafe(doc.data()?.updatedAt)?.toISOString(),
     }));
 
     return NextResponse.json({ bookings });

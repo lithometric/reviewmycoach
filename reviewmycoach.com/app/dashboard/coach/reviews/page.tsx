@@ -4,8 +4,6 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../lib/hooks/useAuth';
-import { doc as firestoreDoc, getDoc } from 'firebase/firestore';
-import { db } from '../../../lib/firebase-client';
 
 interface Review {
   id: string;
@@ -35,13 +33,12 @@ export default function CoachReviewsPage() {
 
     const fetchReviews = async () => {
       try {
-        // Get username from Firestore
-        const userRef = firestoreDoc(db, 'users', user.uid);
-        const userSnap = await getDoc(userRef);
+        // Get username + role from the user-role API
+        const roleRes = await fetch(`/api/auth/user-role?userId=${encodeURIComponent(user.uid)}`);
 
         let resolvedCoachDocId: string = user.uid;
-        if (userSnap.exists()) {
-          const data = userSnap.data();
+        if (roleRes.ok) {
+          const data = await roleRes.json();
           if (data.role !== 'coach') {
             router.push('/dashboard');
             return;

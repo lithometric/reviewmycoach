@@ -1,8 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
-import { db } from '../lib/firebase-client';
 import { useAuth } from '../lib/hooks/useAuth';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -93,12 +91,20 @@ export default function CoachesMarketplace() {
 
   const fetchMarketplaceData = useCallback(async () => {
     try {
-      await Promise.all([
-        fetchFeaturedCoaches(),
-        fetchAvailableJobs(),
-        fetchPopularServices(),
-        fetchFeaturedCourses()
-      ]);
+      const response = await fetch('/api/marketplace/overview');
+      if (response.ok) {
+        const data = await response.json();
+        setFeaturedCoaches((data.coaches || []) as Coach[]);
+        setAvailableJobs(
+          ((data.jobs || []) as any[]).map(job => ({
+            ...job,
+            createdAt: job.createdAt ? new Date(job.createdAt) : undefined,
+            deadline: job.deadline ? new Date(job.deadline) : undefined,
+          })) as Job[]
+        );
+        setPopularServices((data.services || []) as Service[]);
+        setFeaturedCourses((data.courses || []) as Course[]);
+      }
     } catch (error) {
       console.error('Error fetching marketplace data:', error);
     } finally {
@@ -108,15 +114,17 @@ export default function CoachesMarketplace() {
 
   const fetchCoachProfile = useCallback(async () => {
     if (!user) return;
-    
+
     try {
-      const coachesRef = collection(db, 'coaches');
-      const coachQuery = query(coachesRef, where('userId', '==', user.uid));
-      const snapshot = await getDocs(coachQuery);
-      
-      if (!snapshot.empty) {
-        const coach = snapshot.docs[0].data();
-        setCoachProfile(coach);
+      const token = await user.getIdToken();
+      const response = await fetch('/api/marketplace/my-coach', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.coach) {
+          setCoachProfile(data.coach);
+        }
       }
     } catch (error) {
       console.error('Error fetching coach profile:', error);
@@ -129,88 +137,6 @@ export default function CoachesMarketplace() {
       fetchCoachProfile();
     }
   }, [user, isCoach, fetchMarketplaceData, fetchCoachProfile]);
-
-  const fetchFeaturedCoaches = async () => {
-    try {
-      const coachesRef = collection(db, 'coaches');
-      const featuredQuery = query(
-        coachesRef,
-        where('subscriptionStatus', '==', 'active'),
-        orderBy('averageRating', 'desc'),
-        limit(6)
-      );
-      const snapshot = await getDocs(featuredQuery);
-      const coaches = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Coach[];
-      setFeaturedCoaches(coaches);
-    } catch (error) {
-      console.error('Error fetching featured coaches:', error);
-    }
-  };
-
-  const fetchAvailableJobs = async () => {
-    try {
-      const jobsRef = collection(db, 'jobs');
-      const jobsQuery = query(
-        jobsRef,
-        where('status', '==', 'open'),
-        orderBy('createdAt', 'desc'),
-        limit(8)
-      );
-      const snapshot = await getDocs(jobsQuery);
-      const jobs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate(),
-        deadline: doc.data().deadline?.toDate()
-      })) as Job[];
-      setAvailableJobs(jobs);
-    } catch (error) {
-      console.error('Error fetching jobs:', error);
-    }
-  };
-
-  const fetchPopularServices = async () => {
-    try {
-      const servicesRef = collection(db, 'services');
-      const servicesQuery = query(
-        servicesRef,
-        where('isActive', '==', true),
-        orderBy('totalBookings', 'desc'),
-        limit(8)
-      );
-      const snapshot = await getDocs(servicesQuery);
-      const services = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Service[];
-      setPopularServices(services);
-    } catch (error) {
-      console.error('Error fetching services:', error);
-    }
-  };
-
-  const fetchFeaturedCourses = async () => {
-    try {
-      const coursesRef = collection(db, 'courses');
-      const coursesQuery = query(
-        coursesRef,
-        where('isActive', '==', true),
-        orderBy('enrollments', 'desc'),
-        limit(8)
-      );
-      const snapshot = await getDocs(coursesQuery);
-      const courses = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Course[];
-      setFeaturedCourses(courses);
-    } catch (error) {
-      console.error('Error fetching courses:', error);
-    }
-  };
 
   const formatBudget = (amount: number) => {
     return new Intl.NumberFormat('en-US', {

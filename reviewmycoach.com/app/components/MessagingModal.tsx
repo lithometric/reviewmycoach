@@ -1,9 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { db } from '../lib/firebase-client';
 
 interface Message {
   id: string;
@@ -50,36 +48,41 @@ export default function MessagingModal({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Set up real-time message listener
+  // Fetch messages for the current conversation from the API
+  const fetchMessages = useCallback(async (convId: string) => {
+    try {
+      const response = await fetch(
+        `/api/messages?conversationId=${encodeURIComponent(convId)}&limit=100`
+      );
+      if (!response.ok) return;
+      const data = await response.json();
+      const messagesData: Message[] = (data.messages || []).map((m: any) => ({
+        id: m.id,
+        senderId: m.senderId,
+        senderName: m.senderName,
+        recipientId: m.recipientId,
+        message: m.message,
+        createdAt: m.createdAt || new Date().toISOString(),
+        read: m.read,
+      }));
+      setMessages(messagesData);
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+    }
+  }, []);
+
+  // Load messages when opened, then poll for new ones while the modal is open
   useEffect(() => {
     if (!isOpen || !user) return;
 
     const convId = generateConversationId(user.uid, recipientId);
     setConversationId(convId);
 
-    // Listen for real-time messages
-    const messagesRef = collection(db, 'conversations', convId, 'messages');
-    const messagesQuery = query(messagesRef, orderBy('createdAt', 'asc'));
+    fetchMessages(convId);
+    const intervalId = setInterval(() => fetchMessages(convId), 5000);
 
-    const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
-      const messagesData: Message[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        messagesData.push({
-          id: doc.id,
-          senderId: data.senderId,
-          senderName: data.senderName,
-          recipientId: data.recipientId,
-          message: data.message,
-          createdAt: data.createdAt?.toDate().toISOString() || new Date().toISOString(),
-          read: data.read
-        });
-      });
-      setMessages(messagesData);
-    });
-
-    return () => unsubscribe();
-  }, [isOpen, user, recipientId]);
+    return () => clearInterval(intervalId);
+  }, [isOpen, user, recipientId, fetchMessages]);
 
   // Auto-scroll when new messages arrive
   useEffect(() => {
@@ -140,6 +143,9 @@ export default function MessagingModal({
 
       if (response.ok) {
         setNewMessage('');
+        if (conversationId) {
+          await fetchMessages(conversationId);
+        }
       } else {
         setError(data.error || 'Failed to send message');
       }

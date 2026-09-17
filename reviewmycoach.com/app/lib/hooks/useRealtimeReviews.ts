@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchCoachReviews, calculateRatingStats, updateCoachStats } from '../reviews-dataconnect';
 
 interface Review {
   id: string;
@@ -15,6 +14,27 @@ interface RatingStats {
   averageRating: number;
   totalReviews: number;
   ratingDistribution: { [key: number]: number };
+}
+
+// Compute rating stats client-side from the fetched reviews.
+function calculateRatingStats(reviews: Review[]): RatingStats {
+  const ratingDistribution: { [key: number]: number } = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  let sum = 0;
+
+  for (const review of reviews) {
+    const rounded = Math.round(review.rating);
+    if (ratingDistribution[rounded] !== undefined) {
+      ratingDistribution[rounded] += 1;
+    }
+    sum += review.rating;
+  }
+
+  const totalReviews = reviews.length;
+  return {
+    averageRating: totalReviews > 0 ? sum / totalReviews : 0,
+    totalReviews,
+    ratingDistribution,
+  };
 }
 
 interface UseRealtimeReviewsReturn {
@@ -35,16 +55,21 @@ export function useRealtimeReviews(coachId: string): UseRealtimeReviewsReturn {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Load reviews from Data Connect
+  // Load reviews from the reviews API
   const loadReviews = useCallback(async () => {
     try {
       setLoading(true);
-      const reviewsData = await fetchCoachReviews(coachId, 100);
-      
+      const response = await fetch(`/api/coaches/${coachId}/reviews?limit=100`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch reviews (${response.status})`);
+      }
+      const data = await response.json();
+      const reviewsData: any[] = data.reviews || [];
+
       // Convert to Review format
       const formattedReviews: Review[] = reviewsData.map((review: any) => ({
         id: review.id,
-        studentId: review.userId || review.studentId || '',
+        studentId: review.studentId || review.userId || '',
         studentName: review.studentName,
         rating: review.rating,
         reviewText: review.reviewText,
@@ -54,16 +79,11 @@ export function useRealtimeReviews(coachId: string): UseRealtimeReviewsReturn {
 
       // Calculate new rating stats
       const newStats = calculateRatingStats(formattedReviews);
-      
+
       // Update state
       setReviews(formattedReviews);
       setRatingStats(newStats);
-      
-      // Update coach stats in Data Connect
-      if (newStats.totalReviews > 0) {
-        await updateCoachStats(coachId, newStats.averageRating, newStats.totalReviews);
-      }
-      
+
       setLoading(false);
       setError(null);
     } catch (err) {

@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { User } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { auth, db, storage } from '../../../../lib/firebase-client';
+import { auth, storage } from '../../../../lib/firebase-client';
 import { useRouter } from 'next/navigation';
 import NextImage from 'next/image';
 import Link from 'next/link';
@@ -91,13 +90,24 @@ export default function EditCoachProfile() {
 
   const loadCoachProfile = useCallback(async (userId: string) => {
     try {
-      const coachRef = doc(db, 'coaches', userId);
-      const coachSnap = await getDoc(coachRef);
-      
-      if (coachSnap.exists()) {
-        const data = coachSnap.data() as CoachProfile;
-        setFormData({
+      // Resolve the coach's username, then load the coach profile from the API
+      const userRes = await fetch(`/api/user/profile?userId=${encodeURIComponent(userId)}`);
+      const username = userRes.ok ? (await userRes.json()).username : null;
+
+      let data: Partial<CoachProfile> | null = null;
+      if (username) {
+        const coachRes = await fetch(`/api/coaches/by-username/${String(username).toLowerCase()}`);
+        if (coachRes.ok) {
+          const payload = await coachRes.json();
+          data = payload.coach || null;
+        }
+      }
+
+      if (data) {
+        setFormData(prev => ({
+          ...prev,
           ...data,
+          userId: data.userId || userId,
           sports: data.sports || [],
           certifications: data.certifications || [],
           availability: data.availability || [],
@@ -105,7 +115,7 @@ export default function EditCoachProfile() {
           languages: data.languages || [],
           ageGroup: data.ageGroup || [],
           socialMedia: data.socialMedia || {}
-        });
+        }));
       } else {
         // Initialize with user data if coach profile doesn't exist
         setFormData(prev => ({
@@ -146,12 +156,11 @@ export default function EditCoachProfile() {
       if (response.ok) {
         const data = await response.json();
         setUserCards(data.cards || []);
-        
+
         // Get active card from user profile
-        const userRef = doc(db, 'users', userId);
-        const userSnap = await getDoc(userRef);
-        if (userSnap.exists()) {
-          const userData = userSnap.data();
+        const userRes = await fetch(`/api/user/profile?userId=${encodeURIComponent(userId)}`);
+        if (userRes.ok) {
+          const userData = await userRes.json();
           setActiveCardId(userData?.activeProfileCard || null);
         }
       }
@@ -268,13 +277,12 @@ export default function EditCoachProfile() {
 
       // Save URL to Data Connect via API
       const token = await user.getIdToken();
-      const username = user.displayName?.toLowerCase().replace(/\s+/g, '_') || user.uid;
-      
-      // Try to get coach username from Firestore first
-      const userRef = doc(db, 'users', user.uid);
-      const userSnap = await getDoc(userRef);
-      const coachUsername = userSnap.data()?.username || username;
-      
+      const fallbackUsername = user.displayName?.toLowerCase().replace(/\s+/g, '_') || user.uid;
+
+      // Try to get coach username from the user profile API first
+      const userRes = await fetch(`/api/user/profile?userId=${encodeURIComponent(user.uid)}`);
+      const coachUsername = (userRes.ok ? (await userRes.json()).username : null) || fallbackUsername;
+
       const updateResponse = await fetch(`/api/coaches/by-username/${coachUsername}`, {
         method: 'PUT',
         headers: {
@@ -366,11 +374,10 @@ export default function EditCoachProfile() {
 
     setSaving(true);
     try {
-      // Get coach username from Firestore
-      const userRef = doc(db, 'users', user.uid);
-      const userSnap = await getDoc(userRef);
-      const coachUsername = userSnap.data()?.username;
-      
+      // Get coach username from the user profile API
+      const userRes = await fetch(`/api/user/profile?userId=${encodeURIComponent(user.uid)}`);
+      const coachUsername = userRes.ok ? (await userRes.json()).username : null;
+
       if (!coachUsername) {
         alert('Coach username not found. Please complete onboarding first.');
         setSaving(false);

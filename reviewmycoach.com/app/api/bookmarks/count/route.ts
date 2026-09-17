@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'userId is required' }, { status: 400 });
     }
 
-    let query = db.collection('bookmarks').where('userId', '==', userId) as FirebaseFirestore.Query<FirebaseFirestore.DocumentData>;
+    let query = db.collection('bookmarks').where('userId', '==', userId);
     if (type) {
       query = query.where('type', '==', type);
     }

@@ -1,8 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { doc as firestoreDoc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase-client';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../lib/hooks/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -38,11 +36,11 @@ export default function ProfilePage() {
 
   const loadCoachProfile = useCallback(async (userId: string) => {
     try {
-      // First, get username from users collection in Firestore
-      const userRef = firestoreDoc(db, 'users', userId);
-      const userSnap = await getDoc(userRef);
-      const usernameFromUsers = userSnap.exists() ? (userSnap.data() as any)?.username : null;
-      
+      // First, get username + basic fields from the user profile API
+      const userRes = await fetch(`/api/user/profile?userId=${encodeURIComponent(userId)}`);
+      const userData = userRes.ok ? await userRes.json() : null;
+      const usernameFromUsers = userData?.username || null;
+
       // Fetch coach profile from Data Connect API if username exists
       if (usernameFromUsers) {
         try {
@@ -67,8 +65,7 @@ export default function ProfilePage() {
         }
       }
       
-      // Fallback: Initialize with user data from Firestore
-      const userData = userSnap.exists() ? userSnap.data() : null;
+      // Fallback: Initialize with user data from the user profile API
       setFormData(prev => ({
         ...prev,
         userId: userId,
@@ -163,14 +160,20 @@ export default function ProfilePage() {
 
     setSaving(true);
     try {
-      // Update user document in Firestore
-      const userRef = firestoreDoc(db, 'users', user.uid);
-      await setDoc(userRef, {
-        displayName: formData.displayName,
-        username: formData.username?.trim() || null,
-        phoneNumber: formData.phoneNumber,
-        updatedAt: new Date(),
-      }, { merge: true });
+      // Update user document via the user profile API
+      const userToken = await user.getIdToken();
+      await fetch('/api/user/profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${userToken}`,
+        },
+        body: JSON.stringify({
+          displayName: formData.displayName,
+          username: formData.username?.trim() || null,
+          phoneNumber: formData.phoneNumber,
+        }),
+      });
 
       // If user has a coach profile, update it via API
       if (formData.username) {

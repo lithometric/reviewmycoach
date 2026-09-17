@@ -1,9 +1,8 @@
 import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
 import CoachProfileClient from './CoachProfileClient';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
-import { getCoachByUsername as getCoachByUsernameQuery, getCoachReviews as getCoachReviewsQuery } from '../../lib/dataconnect';
+import { sqlQuery } from '../../lib/pgdb';
+import { fetchCoachReviews } from '../../lib/reviews-dataconnect';
 
 // =====================================
 // TYPE DEFINITIONS
@@ -65,66 +64,24 @@ interface Review {
 // DATA FETCHING FUNCTIONS
 // =====================================
 
-// Initialize Firebase client for Data Connect
-let clientApp;
-if (getApps().length === 0) {
-  clientApp = initializeApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getApps()[0];
-}
-
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service'
-});
-
 async function getCoachByUsername(username: string): Promise<CoachProfile | null> {
   try {
-    // Query from Firebase Data Connect
-    // Try multiple case variations since usernames in DB are mixed case
+    // Query the coaches table case-insensitively (usernames in DB are mixed case)
+    const result = await sqlQuery(
+      `SELECT id, data FROM coaches
+       WHERE id = $1 OR LOWER(data->>'username') = LOWER($1)
+       LIMIT 1`,
+      [username]
+    );
 
-    // Generate different case variations
-    const variations = [
-      username.toLowerCase(), // aarika.hughes
-      username, // Original case from URL
-      username.charAt(0).toUpperCase() + username.slice(1).toLowerCase(), // Aarika.hughes
-    ];
-
-    // For usernames with periods, also try capitalizing after periods
-    if (username.includes('.')) {
-      const parts = username.toLowerCase().split('.');
-      const capitalizedParts = parts.map(part =>
-        part.charAt(0).toUpperCase() + part.slice(1)
-      ).join('.');
-      variations.push(capitalizedParts); // Aarika.Hughes
-    }
-
-    // Try each variation
-    let coach = null;
-    for (const variant of variations) {
-      const result = await getCoachByUsernameQuery(dataConnect, {
-        username: variant
-      });
-      coach = result.data.coaches?.[0];
-      if (coach) {
-        console.log(`✅ Found coach with username variant: ${variant}`);
-        break;
-      }
-    }
-
-    if (!coach) {
-      console.log(`❌ Coach not found with username: ${username} (tried ${variations.length} variations)`);
+    const row = result.rows[0];
+    if (!row) {
+      console.log(`❌ Coach not found with username: ${username}`);
       return null;
     }
-    
+
+    const coach: any = { id: row.id, ...row.data };
+
     // Map the Data Connect response to CoachProfile
     return {
       id: coach.id,
@@ -171,15 +128,10 @@ async function getCoachByUsername(username: string): Promise<CoachProfile | null
 
 async function getCoachReviews(coachId: string): Promise<Review[]> {
   try {
-    // Fetch reviews from Data Connect
-    const result = await getCoachReviewsQuery(dataConnect, {
-      coachId,
-      limit: 20
-    });
-    
-    const reviews = result.data.reviews || [];
-    
-    return reviews.map(review => ({
+    // Fetch reviews from Postgres
+    const reviews = await fetchCoachReviews(coachId, 20);
+
+    return reviews.map((review: any) => ({
       id: review.id,
       studentId: review.userId || '',
       studentName: review.studentName || 'Anonymous',
@@ -189,7 +141,7 @@ async function getCoachReviews(coachId: string): Promise<Review[]> {
       sport: review.sport || undefined,
     }));
   } catch (error) {
-    console.error('Error fetching coach reviews from Data Connect:', error);
+    console.error('Error fetching coach reviews from Postgres:', error);
     return [];
   }
 }

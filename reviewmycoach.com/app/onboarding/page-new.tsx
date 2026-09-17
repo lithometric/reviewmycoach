@@ -1,9 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { User } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase-client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '../lib/hooks/useAuth';
 
@@ -87,11 +84,19 @@ export default function Onboarding() {
 
     setLoading(true);
     try {
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, { 
-        username: username.toLowerCase(),
-        updatedAt: new Date()
-      }, { merge: true });
+      const token = await user.getIdToken();
+      const response = await fetch('/api/onboarding/user', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ username: username.toLowerCase() }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save username');
+      }
 
       goToNextStep();
     } catch (error: any) {
@@ -109,17 +114,25 @@ export default function Onboarding() {
     try {
       if (!user) return;
 
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, { 
-        role,
-        updatedAt: new Date()
-      }, { merge: true });
+      const token = await user.getIdToken();
+      await fetch('/api/onboarding/user', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ role }),
+      });
 
       if (role === 'student') {
-        await setDoc(userRef, { 
-          onboardingCompleted: true,
-          updatedAt: new Date()
-        }, { merge: true });
+        await fetch('/api/onboarding/user', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ role, onboardingCompleted: true }),
+        });
 
         router.push('/dashboard');
       } else {
@@ -178,12 +191,14 @@ export default function Onboarding() {
         throw new Error('Failed to claim profile');
       }
 
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, { 
-        onboardingCompleted: true,
-        role: 'coach',
-        updatedAt: new Date()
-      }, { merge: true });
+      await fetch('/api/onboarding/user', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ onboardingCompleted: true, role: 'coach' }),
+      });
 
       router.push('/dashboard/coach');
     } catch (error) {
@@ -199,11 +214,13 @@ export default function Onboarding() {
 
     setLoading(true);
     try {
-      const userRef = doc(db, 'users', user.uid);
-      const userDoc = await getDoc(userRef);
-      const userData = userDoc.data();
-
       const token = await user.getIdToken();
+
+      const userResponse = await fetch('/api/onboarding/user', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const userData = userResponse.ok ? await userResponse.json() : null;
+
       const response = await fetch('/api/coaches', {
         method: 'POST',
         headers: {
@@ -222,11 +239,14 @@ export default function Onboarding() {
         throw new Error('Failed to create coach profile');
       }
 
-      await setDoc(userRef, { 
-        onboardingCompleted: true,
-        role: 'coach',
-        updatedAt: new Date()
-      }, { merge: true });
+      await fetch('/api/onboarding/user', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ onboardingCompleted: true, role: 'coach' }),
+      });
 
       router.push('/dashboard/coach');
     } catch (error) {

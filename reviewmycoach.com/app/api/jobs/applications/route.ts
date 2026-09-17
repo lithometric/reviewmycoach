@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth, db } from '../../../lib/firebase-admin';
+import { toDateSafe } from '../../../lib/pgdb';
 
 // GET - Fetch job applications
 export async function GET(request: NextRequest) {
@@ -36,8 +37,8 @@ export async function GET(request: NextRequest) {
     const applications = snapshot.docs.map((doc: any) => ({
       id: doc.id,
       ...doc.data(),
-      createdAt: doc.data().createdAt?.toDate().toISOString(),
-      updatedAt: doc.data().updatedAt?.toDate().toISOString(),
+      createdAt: toDateSafe(doc.data().createdAt)?.toISOString(),
+      updatedAt: toDateSafe(doc.data().updatedAt)?.toISOString(),
     }));
 
     return NextResponse.json({ applications });
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
     }
 
     const coachDoc = coachSnapshot.docs[0];
-    const coachData = coachDoc.data();
+    const coachData = coachDoc.data() as Record<string, any>;
 
     // Check Coach Pro subscription status
     const userDoc = await db.collection('users').doc(userId).get();
@@ -95,7 +96,7 @@ export async function POST(request: NextRequest) {
     let hasCoachPro = false;
     if (subscription) {
       const now = new Date();
-      const expiresAt = subscription.expiresAt ? subscription.expiresAt.toDate() : null;
+      const expiresAt = toDateSafe(subscription.expiresAt);
       hasCoachPro = subscription.isActive === true && 
                    subscription.plan === 'pro' && 
                    (!expiresAt || expiresAt > now);
@@ -249,7 +250,7 @@ export async function PUT(request: NextRequest) {
 
       if (!coachSnapshot.empty) {
         const coachDoc = coachSnapshot.docs[0];
-        const coachData = coachDoc.data();
+        const coachData = coachDoc.data() as Record<string, any>;
         const coachEmail = coachData.email;
 
         if (coachEmail) {

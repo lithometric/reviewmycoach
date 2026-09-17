@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
-import { auth, db } from '../lib/firebase-client';
+import { auth } from '../lib/firebase-client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { setAuthToken } from '../lib/auth-cookie';
@@ -158,9 +157,9 @@ export default function SignUp() {
 
   const createUserDocument = async (user: { uid: string; email: string | null }, additionalData: any = {}) => {
     if (!user) return;
-    
+
     const displayName = `${formData.firstName} ${formData.lastName}`.trim();
-    
+
     const userData = {
       email: user.email,
       displayName: displayName,
@@ -170,14 +169,23 @@ export default function SignUp() {
       role: 'user',
       onboardingCompleted: false,
       isVerified: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: new Date().toISOString(),
       ...additionalData
     };
 
     try {
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, userData);
+      const token = await auth.currentUser?.getIdToken();
+      const response = await fetch('/api/user/profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(userData),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to create user document');
+      }
     } catch (error) {
       console.error('Error creating user document:', error);
       throw error;
@@ -251,22 +259,28 @@ export default function SignUp() {
       
       if (!result.user) throw new Error('Google sign up failed');
 
-      // Create user document in Firestore
-      const userRef = doc(db, 'users', result.user.uid);
-      await setDoc(userRef, {
-        email: result.user.email,
-        displayName: result.user.displayName || '',
-        firstName: result.user.displayName?.split(' ')[0] || '',
-        lastName: result.user.displayName?.split(' ').slice(1).join(' ') || '',
-        role: 'user',
-        onboardingCompleted: false,
-        isVerified: result.user.emailVerified,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
       // Get ID token
       const token = await result.user.getIdToken();
+
+      // Create user document via the user profile API
+      await fetch('/api/user/profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          email: result.user.email,
+          displayName: result.user.displayName || '',
+          firstName: result.user.displayName?.split(' ')[0] || '',
+          lastName: result.user.displayName?.split(' ').slice(1).join(' ') || '',
+          role: 'user',
+          onboardingCompleted: false,
+          isVerified: result.user.emailVerified,
+          createdAt: new Date().toISOString(),
+        }),
+      });
+
       await setAuthToken(token);
       
       // Redirect to onboarding

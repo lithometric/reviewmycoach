@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { collection, addDoc, getDocs } from 'firebase/firestore';
-import { db } from '../../../lib/firebase-client';
+import { adminDb } from '../../../lib/firebase-admin-server';
 import { auth } from '../../../lib/firebase-admin';
 // Predefined tags data
 const PREDEFINED_TAGS = {
@@ -34,20 +33,20 @@ export async function POST(request: NextRequest) {
     // Verify admin access (you might want to add proper admin role checking)
     await auth.verifyIdToken(token);
     
-    const tagsRef = collection(db, 'tags');
+    const tagsRef = adminDb.collection('tags');
     let createdCount = 0;
     let skippedCount = 0;
 
     // Check if tags already exist to avoid duplicates
-    const existingTagsSnapshot = await getDocs(tagsRef);
+    const existingTagsSnapshot = await tagsRef.get();
     const existingTagNames = new Set(
-      existingTagsSnapshot.docs.map(doc => doc.data().name.toLowerCase())
+      existingTagsSnapshot.docs.map(doc => doc.data()?.name.toLowerCase())
     );
 
     // Initialize sports tags
     for (const sport of PREDEFINED_TAGS.sports) {
       if (!existingTagNames.has(sport.toLowerCase())) {
-        await addDoc(tagsRef, {
+        await tagsRef.add({
           name: sport,
           category: 'sport',
           count: 0,
@@ -64,7 +63,7 @@ export async function POST(request: NextRequest) {
     // Initialize specialty tags
     for (const specialty of PREDEFINED_TAGS.specialties) {
       if (!existingTagNames.has(specialty.toLowerCase())) {
-        await addDoc(tagsRef, {
+        await tagsRef.add({
           name: specialty,
           category: 'specialty',
           count: 0,
@@ -81,7 +80,7 @@ export async function POST(request: NextRequest) {
     // Initialize certification tags
     for (const certification of PREDEFINED_TAGS.certifications) {
       if (!existingTagNames.has(certification.toLowerCase())) {
-        await addDoc(tagsRef, {
+        await tagsRef.add({
           name: certification,
           category: 'certification',
           count: 0,

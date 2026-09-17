@@ -1,49 +1,21 @@
 /**
- * Firebase Data Connect Server-Side Client
- * 
- * This module provides server-side access to Firebase Data Connect
- * for use in API routes and server components.
+ * Server-side coach search — Railway Postgres.
+ *
+ * Replaces the old Firebase Data Connect implementation with direct SQL over
+ * public.coaches (documents in the `data` JSONB column, camelCase keys).
+ * Export signatures and return shapes are unchanged: arrays of camelCase
+ * coach objects ({ id, username, displayName, sports, averageRating, ... }).
  */
+import { sqlQuery } from './pgdb';
 
-import { initializeApp as initializeClientApp, getApps as getClientApps } from 'firebase/app';
-import { getDataConnect } from 'firebase/data-connect';
-import {
-  searchCoachesAdvanced,
-  getPublicCoaches,
-  type SearchCoachesAdvancedVariables,
-  type GetPublicCoachesVariables,
-} from './dataconnect';
-
-// Note: Firebase Admin is NOT needed for DataConnect operations
-// DataConnect uses the client SDK, not Admin SDK
-// Admin SDK initialization is handled separately in firebase-admin-server.ts when needed
-
-// Initialize Firebase Client App for Data Connect
-let clientApp;
-if (getClientApps().length === 0) {
-  clientApp = initializeClientApp({
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  });
-} else {
-  clientApp = getClientApps()[0];
+function rowsToCoaches(rows: Array<{ id: string; data: Record<string, any> }>) {
+  return rows.map((r) => ({ id: r.id, ...r.data }));
 }
 
-// Get Data Connect instance for server-side use
-const dataConnect = getDataConnect(clientApp, {
-  connector: 'reviewmycoach',
-  location: 'us-east4',
-  service: 'review-my-coach-service'
-});
-
 /**
- * Search coaches with advanced filtering (server-side)
- * When searchTerm is provided, we fetch all coaches and filter client-side
- * since Firebase DataConnect doesn't support text search operators
+ * Search coaches with advanced filtering (server-side).
+ * searchTerm matches username/displayName/bio/sports/specialties/location/
+ * organization/school/email-domain; username & displayName matches rank first.
  */
 export async function searchCoachesWithFilters(params: {
   searchTerm?: string;
@@ -59,139 +31,68 @@ export async function searchCoachesWithFilters(params: {
 }) {
   const limit = params.limit || 12;
   const page = params.page || 1;
-  
-  try {
-    // If searchTerm is provided, we need to fetch ALL coaches to filter properly
-    // Firebase DataConnect doesn't support text search, so we filter client-side
-    // Since there are ~30k coaches, we fetch in batches to avoid memory issues
-    let coaches: any[] = [];
-    
-    if (params.searchTerm) {
-      // Fetch coaches in batches until we have enough results or have searched all coaches
-      const batchSize = 10000; // Fetch 10k at a time
-      const maxBatches = 5; // Max 50k coaches (should cover all)
-      const term = params.searchTerm.toLowerCase().trim();
-      let offset = 0;
-      let foundEnoughResults = false;
-      
-      for (let batch = 0; batch < maxBatches && !foundEnoughResults; batch++) {
-        const variables: SearchCoachesAdvancedVariables = {
-          searchTerm: params.searchTerm,
-          sport: params.sport,
-          location: params.location,
-          gender: params.gender,
-          organization: params.organization,
-          minRating: params.minRating,
-          maxRate: params.maxRate,
-          isVerified: params.isVerified,
-          offset,
-          limit: batchSize,
-        };
-        
-        const result = await searchCoachesAdvanced(dataConnect, variables);
-        const batchCoaches = result.data.coaches || [];
-        
-        if (batchCoaches.length === 0) {
-          break; // No more coaches
-        }
-        
-        // Filter this batch
-        const filteredBatch = batchCoaches.filter((coach: any) => {
-          const username = (coach.username || '').toLowerCase();
-          const displayName = (coach.displayName || '').toLowerCase();
-          const bio = (coach.bio || '').toLowerCase();
-          const sports = Array.isArray(coach.sports) ? coach.sports.map((s: string) => s?.toLowerCase()) : [];
-          const specialties = Array.isArray(coach.specialties) ? coach.specialties.map((s: string) => s?.toLowerCase()) : [];
-          const location = (coach.location || '').toLowerCase();
-          const organization = (coach.organization || '').toLowerCase();
-          const school = (coach.school || '').toLowerCase();
-          // Extract email domain (part after @) for school/university matching
-          const email = (coach.email || '').toLowerCase();
-          const emailDomain = email.includes('@') ? email.split('@')[1] : '';
+  const offset = (page - 1) * limit;
 
-          // Prioritize username and displayName matches
-          return (
-            username.includes(term) ||
-            displayName.includes(term) ||
-            bio.includes(term) ||
-            sports.some((s: string) => s?.includes(term)) ||
-            specialties.some((s: string) => s?.includes(term)) ||
-            location.includes(term) ||
-            organization.includes(term) ||
-            school.includes(term) ||
-            emailDomain.includes(term)
-          );
-        });
-        
-        coaches.push(...filteredBatch);
-        
-        // If we got less than batchSize, we've reached the end
-        if (batchCoaches.length < batchSize) {
-          break;
-        }
-        
-        // If we found enough results for pagination, we can stop early
-        // (we need at least page * limit results)
-        if (coaches.length >= page * limit + limit) {
-          foundEnoughResults = true;
-        }
-        
-        offset += batchSize;
-      }
-      
-      // Sort by relevance: username/displayName matches first
-      coaches.sort((a: any, b: any) => {
-        const aUsername = (a.username || '').toLowerCase();
-        const aDisplayName = (a.displayName || '').toLowerCase();
-        const bUsername = (b.username || '').toLowerCase();
-        const bDisplayName = (b.displayName || '').toLowerCase();
-        
-        const aUsernameMatch = aUsername.includes(term);
-        const aDisplayNameMatch = aDisplayName.includes(term);
-        const bUsernameMatch = bUsername.includes(term);
-        const bDisplayNameMatch = bDisplayName.includes(term);
-        
-        // Username matches come first
-        if (aUsernameMatch && !bUsernameMatch) return -1;
-        if (!aUsernameMatch && bUsernameMatch) return 1;
-        
-        // Then displayName matches
-        if (aDisplayNameMatch && !bDisplayNameMatch) return -1;
-        if (!aDisplayNameMatch && bDisplayNameMatch) return 1;
-        
-        // Then by rating
-        return (b.averageRating || 0) - (a.averageRating || 0);
-      });
-      
-      // Apply pagination after filtering
-      const startIndex = (page - 1) * limit;
-      const endIndex = startIndex + limit;
-      coaches = coaches.slice(startIndex, endIndex);
-    } else {
-      // No search term, use normal pagination
-      const offset = (page - 1) * limit;
-      const variables: SearchCoachesAdvancedVariables = {
-        searchTerm: params.searchTerm,
-        sport: params.sport,
-        location: params.location,
-        gender: params.gender,
-        organization: params.organization,
-        minRating: params.minRating,
-        maxRate: params.maxRate,
-        isVerified: params.isVerified,
-        offset,
-        limit,
-      };
-      
-      const result = await searchCoachesAdvanced(dataConnect, variables);
-      coaches = result.data.coaches || [];
-    }
-    
-    return coaches;
-  } catch (error) {
-    console.error('Error searching coaches:', error);
-    throw error;
+  const values: unknown[] = [];
+  const where: string[] = [`(data->>'isPublic')::boolean IS TRUE`];
+
+  if (params.sport) {
+    values.push(`%${params.sport}%`);
+    where.push(`EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(data->'sports','[]'::jsonb)) s WHERE s ILIKE $${values.length})`);
   }
+  if (params.location) {
+    values.push(`%${params.location}%`);
+    where.push(`data->>'location' ILIKE $${values.length}`);
+  }
+  if (params.gender) {
+    values.push(params.gender);
+    where.push(`LOWER(data->>'gender') = LOWER($${values.length})`);
+  }
+  if (params.organization) {
+    values.push(`%${params.organization}%`);
+    where.push(`data->>'organization' ILIKE $${values.length}`);
+  }
+  if (params.minRating !== undefined && params.minRating !== null) {
+    values.push(params.minRating);
+    where.push(`COALESCE((data->>'averageRating')::numeric, 0) >= $${values.length}`);
+  }
+  if (params.maxRate !== undefined && params.maxRate !== null) {
+    values.push(params.maxRate);
+    where.push(`COALESCE((data->>'hourlyRate')::numeric, 0) <= $${values.length}`);
+  }
+  if (params.isVerified !== undefined) {
+    where.push(`COALESCE((data->>'isVerified')::boolean, false) = ${params.isVerified ? 'TRUE' : 'FALSE'}`);
+  }
+
+  let relevance = '';
+  if (params.searchTerm && params.searchTerm.trim()) {
+    values.push(`%${params.searchTerm.trim()}%`);
+    const t = `$${values.length}`;
+    where.push(`(
+      data->>'username' ILIKE ${t} OR
+      data->>'displayName' ILIKE ${t} OR
+      data->>'bio' ILIKE ${t} OR
+      data->>'location' ILIKE ${t} OR
+      data->>'organization' ILIKE ${t} OR
+      data->>'school' ILIKE ${t} OR
+      split_part(COALESCE(data->>'email',''), '@', 2) ILIKE ${t} OR
+      EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(data->'sports','[]'::jsonb)) s WHERE s ILIKE ${t}) OR
+      EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(data->'specialties','[]'::jsonb)) s WHERE s ILIKE ${t})
+    )`);
+    relevance = `CASE
+      WHEN data->>'username' ILIKE ${t} THEN 0
+      WHEN data->>'displayName' ILIKE ${t} THEN 1
+      ELSE 2 END,`;
+  }
+
+  const sql = `
+    SELECT id, data FROM coaches
+    WHERE ${where.join(' AND ')}
+    ORDER BY ${relevance} COALESCE((data->>'averageRating')::numeric, 0) DESC, id ASC
+    LIMIT ${Math.max(0, Math.floor(limit))} OFFSET ${Math.max(0, Math.floor(offset))}`;
+
+  const r = await sqlQuery(sql, values);
+  return rowsToCoaches(r.rows);
 }
 
 /**
@@ -201,29 +102,42 @@ export async function fetchPublicCoaches(params: {
   page?: number;
   limit?: number | null;
 }) {
-  // If limit is null, fetch all coaches (use a very large number)
-  // If limit is undefined, use default of 24
   const limit = params.limit === null ? 100000 : (params.limit || 24);
   const page = params.page || 1;
   const offset = (page - 1) * limit;
 
-  const variables: GetPublicCoachesVariables = {
-    limit,
-    offset,
-  };
+  const r = await sqlQuery(
+    `SELECT id, data FROM coaches
+     WHERE (data->>'isPublic')::boolean IS TRUE
+     ORDER BY COALESCE((data->>'averageRating')::numeric, 0) DESC, id ASC
+     LIMIT $1 OFFSET $2`, [limit, offset]);
+  return rowsToCoaches(r.rows);
+}
 
-  try {
-    const result = await getPublicCoaches(dataConnect, variables);
-    return result.data.coaches || [];
-  } catch (error) {
-    console.error('Error fetching public coaches:', error);
-    throw error;
+/**
+ * Count public coaches matching an optional search term (for pagination UIs).
+ */
+export async function countPublicCoaches(searchTerm?: string): Promise<number> {
+  const values: unknown[] = [];
+  let extra = '';
+  if (searchTerm && searchTerm.trim()) {
+    values.push(`%${searchTerm.trim()}%`);
+    const t = `$${values.length}`;
+    extra = ` AND (
+      data->>'username' ILIKE ${t} OR data->>'displayName' ILIKE ${t} OR
+      data->>'bio' ILIKE ${t} OR data->>'location' ILIKE ${t} OR
+      data->>'organization' ILIKE ${t} OR data->>'school' ILIKE ${t} OR
+      EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(data->'sports','[]'::jsonb)) s WHERE s ILIKE ${t})
+    )`;
   }
+  const r = await sqlQuery(
+    `SELECT COUNT(*)::int AS n FROM coaches WHERE (data->>'isPublic')::boolean IS TRUE${extra}`, values);
+  return r.rows[0]?.n ?? 0;
 }
 
 /**
  * Filter coaches on the server side for complex search terms
- * Prioritizes username and displayName matches
+ * (kept for compatibility — pure function, no DB access)
  */
 export function filterCoaches(coaches: any[], searchTerm?: string, organization?: string, ageGroup?: string) {
   let filtered = [...coaches];
@@ -238,11 +152,9 @@ export function filterCoaches(coaches: any[], searchTerm?: string, organization?
       const specialties = Array.isArray(coach.specialties) ? coach.specialties.map((s: string) => s?.toLowerCase()) : [];
       const organization = (coach.organization || '').toLowerCase();
       const school = (coach.school || '').toLowerCase();
-      // Extract email domain (part after @) for school/university matching
       const email = (coach.email || '').toLowerCase();
       const emailDomain = email.includes('@') ? email.split('@')[1] : '';
 
-      // Prioritize username and displayName matches
       return (
         username.includes(term) ||
         displayName.includes(term) ||
@@ -254,28 +166,16 @@ export function filterCoaches(coaches: any[], searchTerm?: string, organization?
         emailDomain.includes(term)
       );
     });
-    
-    // Sort by relevance: username/displayName matches first
+
     filtered.sort((a, b) => {
-      const aUsername = (a.username || '').toLowerCase();
-      const aDisplayName = (a.displayName || '').toLowerCase();
-      const bUsername = (b.username || '').toLowerCase();
-      const bDisplayName = (b.displayName || '').toLowerCase();
-      
-      const aUsernameMatch = aUsername.includes(term);
-      const aDisplayNameMatch = aDisplayName.includes(term);
-      const bUsernameMatch = bUsername.includes(term);
-      const bDisplayNameMatch = bDisplayName.includes(term);
-      
-      // Username matches come first
+      const aUsernameMatch = (a.username || '').toLowerCase().includes(term);
+      const aDisplayNameMatch = (a.displayName || '').toLowerCase().includes(term);
+      const bUsernameMatch = (b.username || '').toLowerCase().includes(term);
+      const bDisplayNameMatch = (b.displayName || '').toLowerCase().includes(term);
       if (aUsernameMatch && !bUsernameMatch) return -1;
       if (!aUsernameMatch && bUsernameMatch) return 1;
-      
-      // Then displayName matches
       if (aDisplayNameMatch && !bDisplayNameMatch) return -1;
       if (!aDisplayNameMatch && bDisplayNameMatch) return 1;
-      
-      // Then by rating
       return (b.averageRating || 0) - (a.averageRating || 0);
     });
   }
@@ -288,7 +188,7 @@ export function filterCoaches(coaches: any[], searchTerm?: string, organization?
 
   if (ageGroup) {
     filtered = filtered.filter((coach) =>
-      Array.isArray(coach.ageGroup) && coach.ageGroup.some((age: string) => 
+      Array.isArray(coach.ageGroup) && coach.ageGroup.some((age: string) =>
         (age || '').toLowerCase().includes(ageGroup.toLowerCase())
       )
     );
@@ -296,6 +196,3 @@ export function filterCoaches(coaches: any[], searchTerm?: string, organization?
 
   return filtered;
 }
-
-export { dataConnect };
-

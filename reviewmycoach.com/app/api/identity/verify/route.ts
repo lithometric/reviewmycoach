@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { toDateSafe } from '../../../lib/pgdb';
 
 // Function to get Firebase instances
 async function getFirebaseInstances() {
@@ -191,8 +192,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       status: verificationData.status,
-      submittedAt: verificationData.submittedAt?.toDate().toISOString(),
-      reviewedAt: verificationData.reviewedAt?.toDate().toISOString() || null,
+      submittedAt: toDateSafe(verificationData.submittedAt)?.toISOString(),
+      reviewedAt: toDateSafe(verificationData.reviewedAt)?.toISOString() || null,
       reviewNotes: verificationData.reviewNotes || '',
       coachUsername: verificationData.coachUsername
     });

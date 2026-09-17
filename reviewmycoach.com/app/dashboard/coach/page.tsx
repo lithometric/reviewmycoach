@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../lib/hooks/useAuth';
-import { doc as firestoreDoc, getDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase-client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import MessagingModal from '../../components/MessagingModal';
@@ -87,19 +85,17 @@ export default function CoachDashboard() {
     console.log('🔍 Fetching coach data for user:', userId);
     
     try {
-      // First, get the user's username from their user profile in Firestore
-      const userRef = firestoreDoc(db, 'users', userId);
-      const userSnap = await getDoc(userRef);
+      // First, get the user's username from their user profile via the API
+      const userRes = await fetch(`/api/auth/user-role?userId=${encodeURIComponent(userId)}`);
       let username = null;
-      
-      console.log('📄 User document exists:', userSnap.exists());
-      
-      if (userSnap.exists()) {
-        const userData = userSnap.data();
+
+      console.log('📄 User document found:', userRes.ok);
+
+      if (userRes.ok) {
+        const userData = await userRes.json();
         username = userData.username;
-        console.log('👤 Username from Firestore:', username);
-        console.log('📋 Full user data:', userData);
-        
+        console.log('👤 Username from user profile:', username);
+
         if (username) {
           console.log('🔍 Fetching coach profile from Data Connect for username:', username);
           
@@ -196,12 +192,11 @@ export default function CoachDashboard() {
   };
 
   const resolveDisplayName = async (targetUserId: string): Promise<string> => {
-    // Try user profile first from Firestore
+    // Try user profile first via the user-role API
     try {
-      const userRef = firestoreDoc(db, 'users', targetUserId);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists()) {
-        const u = userSnap.data() as any;
+      const res = await fetch(`/api/auth/user-role?userId=${encodeURIComponent(targetUserId)}`);
+      if (res.ok) {
+        const u = await res.json();
         return u.displayName || u.username || u.email || 'User';
       }
     } catch {}
